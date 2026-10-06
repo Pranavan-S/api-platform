@@ -37,6 +37,7 @@ import { useFillScrollArea } from '@/hooks/useFillScrollArea';
 import { useFrozenWhile } from '@/hooks/useFrozenWhile';
 import { useFormatters } from '@/i18n/useFormatters';
 import { useNotifications } from '@/components/Notifications';
+import { useAllSubscriptionPlans } from '@/api/resources/subscriptionPlans';
 import { LoadingState } from '@/components/StateViews';
 import { routes } from '@/routes/paths';
 import { useConsoleScope } from '@/scope/ConsoleScopeProvider';
@@ -48,6 +49,7 @@ import { PublicationVersionToggle } from './components/PublicationVersionToggle'
 import { PublishActionsBar } from './components/PublishActionsBar';
 import { PublishedSpecificationTab } from './components/PublishedSpecificationTab';
 import { SpecificationTab } from './components/SpecificationTab';
+import { SubscriptionPlansTab } from './components/SubscriptionPlansTab';
 import { usePublishPageData } from './usePublishPageData';
 import {
   draftFormValuesToInput,
@@ -148,6 +150,11 @@ const messages = defineMessages({
     id: 'apiControlPlane.pages.appShell.appShellPages.portals.PortalPublishPage.draftSavedDetailsOnly',
     defaultMessage: 'Details saved. The specification has an error and was not saved.',
   },
+  inactivePlansBlock: {
+    id: 'apiControlPlane.pages.appShell.appShellPages.portals.PortalPublishPage.inactivePlansBlock',
+    defaultMessage: 'Clear inactive plans to save or publish: {names}.',
+    description: 'Warning when Save Draft or Publish is blocked because the selection still holds inactive plans. {names} is a comma-separated list of plan names.',
+  },
   published: {
     id: 'apiControlPlane.pages.appShell.appShellPages.portals.PortalPublishPage.published',
     defaultMessage: 'Published to {portalName}.',
@@ -199,7 +206,7 @@ const rethrowUnreported = (error: unknown): void => {
   if (!isApiError(error)) throw error;
 };
 
-type PublishTab = 'details' | 'specification';
+type PublishTab = 'details' | 'specification' | 'subscriptionPlans';
 
 /** Which action is currently in flight, so the right button (and only that one) shows busy. */
 type PendingAction = 'idle' | 'saving' | 'publishing' | 'unpublishing' | 'deprecating';
@@ -207,13 +214,13 @@ type PendingAction = 'idle' | 'saving' | 'publishing' | 'unpublishing' | 'deprec
 /**
  * The publish/unpublish/deprecate flow for one API on one API Portal.
  *
- * Only "API Details" and "Specification" are editable; the other tabs render
- * disabled. Save Draft and Publish each enforce their own rule: Save Draft
- * always writes `.../draft`, and writes `.../draft/definition` too only when
- * the specification text parses, reporting honestly when it couldn't; Publish
- * requires both saves to succeed before it calls `.../publish`, since the
- * server's publish takes no body and only publishes what the draft already
- * holds.
+ * "API Details", "Specification" and "Subscription Plans" are editable; the
+ * other tabs still render disabled. Save Draft and Publish each enforce their
+ * own rule: Save Draft always writes `.../draft`, and writes
+ * `.../draft/definition` too only when the specification text parses,
+ * reporting honestly when it couldn't; Publish requires both saves to succeed
+ * before it calls `.../publish`, since the server's publish takes no body and
+ * only publishes what the draft already holds.
  *
  * No `ScopeGate`: this page is only reachable from the Portals listing's card,
  * which is already fully API-scoped.
@@ -248,6 +255,8 @@ function PortalPublishPageContent() {
   const [tab, setTab] = useState<PublishTab>('details');
   const [viewingPublished, setViewingPublished] = useState(false);
   const data = usePublishPageData(apiPortalId, apiHandler, viewingPublished && tab === 'specification');
+
+  const plansQuery = useAllSubscriptionPlans();
 
   const saveDraftMutation = useSaveApiPublicationDraft();
   const saveDefinitionMutation = useSaveApiPublicationDraftDefinition({ handlesErrors: true });
@@ -393,8 +402,23 @@ function PortalPublishPageContent() {
     }
   };
 
+  // The server refuses a selection that holds an inactive plan; stop here and show the plans
+  // instead of failing the request. Skipped while the plan list is unavailable (the server still checks).
+  const blockedByInactivePlans = (): boolean => {
+    const selected = new Set(values.subscriptionPlanIds);
+    const inactive = (plansQuery.data?.list ?? []).filter(
+      (plan) => plan.id && selected.has(plan.id) && plan.status !== 'ACTIVE',
+    );
+    if (inactive.length === 0) return false;
+    setTab('subscriptionPlans');
+    const names = inactive.map((plan) => `"${plan.displayName}"`).join(', ');
+    notify(intl.formatMessage(messages.inactivePlansBlock, { names }), 'warning');
+    return true;
+  };
+
   const handleSaveDraft = () =>
     runAction('saving', async () => {
+      if (blockedByInactivePlans()) return;
       if (!(await saveDetails())) return;
       const definitionSaved = await saveDefinition();
       notify(
@@ -410,6 +434,7 @@ function PortalPublishPageContent() {
 
   const handlePublish = () =>
     runAction('publishing', async () => {
+      if (blockedByInactivePlans()) return;
       if (!(await saveDetails())) return;
       // Publish requires a saved, parseable definition — never proceed on a
       // partial save, which would publish whatever definition was already
@@ -446,6 +471,7 @@ function PortalPublishPageContent() {
   };
 
   const publishedValues = resolveDraftFormValues(undefined, publication, undefined);
+  const savedPlanIds = resolveDraftFormValues(draft, publication, undefined).subscriptionPlanIds;
   // A draft that was never saved has nothing to describe, so it gets no banner.
   const banner = showingPublished
     ? {
@@ -467,9 +493,9 @@ function PortalPublishPageContent() {
 
   const renderContent = () => {
     if (showingPublished) {
-      return tab === 'details' ? (
-        <ApiDetailsTab readOnly values={publishedValues} />
-      ) : (
+      if (tab === 'details') return <ApiDetailsTab readOnly values={publishedValues} />;
+      if (tab === 'subscriptionPlans') return <SubscriptionPlansTab readOnly values={publishedValues} />;
+      return (
         <PublishedSpecificationTab
           definition={data.publishedDefinition.definition}
           failed={data.publishedDefinition.failed}
@@ -477,20 +503,33 @@ function PortalPublishPageContent() {
         />
       );
     }
-    return tab === 'details' ? (
-      <ApiDetailsTab
-        disabled={pendingAction !== 'idle'}
-        errors={{
-          displayName: errorFor('displayName'),
-          version: errorFor('version'),
-          productionUrl: errorFor('productionUrl'),
-          sandboxUrl: errorFor('sandboxUrl'),
-        }}
-        onBlurField={markTouched}
-        onChange={setValues}
-        values={values}
-      />
-    ) : (
+    if (tab === 'details') {
+      return (
+        <ApiDetailsTab
+          disabled={pendingAction !== 'idle'}
+          errors={{
+            displayName: errorFor('displayName'),
+            version: errorFor('version'),
+            productionUrl: errorFor('productionUrl'),
+            sandboxUrl: errorFor('sandboxUrl'),
+          }}
+          onBlurField={markTouched}
+          onChange={setValues}
+          values={values}
+        />
+      );
+    }
+    if (tab === 'subscriptionPlans') {
+      return (
+        <SubscriptionPlansTab
+          disabled={pendingAction !== 'idle'}
+          onChange={setValues}
+          savedPlanIds={savedPlanIds}
+          values={values}
+        />
+      );
+    }
+    return (
       <SpecificationTab
         disabled={pendingAction !== 'idle'}
         format={definitionFormat}
@@ -541,7 +580,7 @@ function PortalPublishPageContent() {
             >
               <Tab label={intl.formatMessage(messages.tabDetails)} value="details" />
               <Tab label={intl.formatMessage(messages.tabSpecification)} value="specification" />
-              <Tab disabled label={intl.formatMessage(messages.tabSubscriptionPlans)} value="subscriptionPlans" />
+              <Tab label={intl.formatMessage(messages.tabSubscriptionPlans)} value="subscriptionPlans" />
               <Tab disabled label={intl.formatMessage(messages.tabDocumentations)} value="documentations" />
               <Tab disabled label={intl.formatMessage(messages.tabLandingPage)} value="landingPage" />
             </Tabs>
