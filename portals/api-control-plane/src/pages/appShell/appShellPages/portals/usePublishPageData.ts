@@ -27,6 +27,10 @@ import {
 } from '@/api/resources/apiPublications';
 import { isApiError } from '@/api/core/errors';
 import { useRestApi, useRestApiOpenApi } from '@/api/resources/restApis';
+import { useDeployments } from '@/api/resources/restApis/deployments';
+import { useRestApiGateways } from '@/api/resources/restApis/apiGateways/apiGateways.hooks';
+import { deployedGateways } from '../test/utils/deployedGateways';
+import { gatewayUrlOptions } from './utils/gatewayUrlOptions';
 import { resolveDraftFormValues, type DraftFormValues } from './utils/publicationForm';
 import { readStoredDefinition, type StoredDefinition } from './utils/storedDefinition';
 
@@ -54,6 +58,9 @@ const liveData = <T,>(query: { data: T | undefined; error: unknown }): T | undef
  * (draft definition, then publication definition, then the API's own spec);
  * passing `undefined` for the API handle keeps a tier's query disabled.
  *
+ * The API's deployed gateways are read too: their URLs are the Production URL's
+ * options, and the first is what the form opens with when nothing is saved.
+ *
  * The published definition is also fetched, on demand, when `wantPublishedDefinition`
  * is set and the API is live — the same query as the fallback tier, so a definition already read
  * for the pre-fill is reused, and one read for the viewer is not read again
@@ -65,6 +72,8 @@ const liveData = <T,>(query: { data: T | undefined; error: unknown }): T | undef
  */
 export function usePublishPageData(apiPortalId: string, apiHandler: string, wantPublishedDefinition: boolean) {
   const apiQuery = useRestApi(apiHandler);
+  const gatewaysQuery = useRestApiGateways(apiQuery.data?.id);
+  const deploymentsQuery = useDeployments(apiQuery.data?.id);
   const draftQuery = useApiPublicationDraft(apiPortalId, REST_API_TYPE, apiHandler);
   const publicationQuery = useApiPublication(apiPortalId, REST_API_TYPE, apiHandler);
   const draftDefinitionQuery = useApiPublicationDraftDefinition(apiPortalId, REST_API_TYPE, apiHandler);
@@ -92,6 +101,8 @@ export function usePublishPageData(apiPortalId: string, apiHandler: string, want
     apiQuery.isPending ||
     draftQuery.isPending ||
     publicationQuery.isPending ||
+    // The Production URL defaults to a gateway's, so the form waits for them.
+    (Boolean(apiQuery.data) && (gatewaysQuery.isPending || deploymentsQuery.isPending)) ||
     draftDefinitionQuery.isPending ||
     (draftDefinitionAbsent && publicationDefinitionQuery.isPending) ||
     (publicationDefinitionAbsent && apiOpenApiQuery.isPending);
@@ -137,6 +148,15 @@ export function usePublishPageData(apiPortalId: string, apiHandler: string, want
     [publicationDefinitionData],
   );
 
+  const productionUrlOptions = useMemo(
+    () =>
+      gatewayUrlOptions(
+        deployedGateways(gatewaysQuery.data?.list ?? [], deploymentsQuery.data?.list ?? []),
+        apiQuery.data?.context,
+      ),
+    [gatewaysQuery.data, deploymentsQuery.data, apiQuery.data?.context],
+  );
+
   // The freshest tier that has a definition wins: draft, publication, the API's own.
   const seed = useMemo<PublishSeed | undefined>(() => {
     if (isLoading) return undefined;
@@ -144,14 +164,27 @@ export function usePublishPageData(apiPortalId: string, apiHandler: string, want
       (draftDefinitionData && readStoredDefinition(draftDefinitionData.text, draftDefinitionData.contentType)) ??
       publishedDefinition ??
       (apiOpenApiData ? readStoredDefinition(apiOpenApiData.content) : undefined);
-    return { definition, values: resolveDraftFormValues(draft, publication, apiQuery.data) };
-  }, [isLoading, apiQuery.data, draft, publication, draftDefinitionData, publishedDefinition, apiOpenApiData]);
+    return {
+      definition,
+      values: resolveDraftFormValues(draft, publication, apiQuery.data, productionUrlOptions[0]?.url),
+    };
+  }, [
+    isLoading,
+    apiQuery.data,
+    draft,
+    publication,
+    productionUrlOptions,
+    draftDefinitionData,
+    publishedDefinition,
+    apiOpenApiData,
+  ]);
 
   return {
     api: apiQuery.data,
     draft,
     error,
     isLoading,
+    productionUrlOptions,
     publication,
     publishedDefinition: {
       definition: publishedDefinition,

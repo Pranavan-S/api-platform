@@ -26,11 +26,14 @@ import { resetHttpClient } from '@/api/core/http';
 import { routes } from '@/routes/paths';
 import {
   accepts,
+  aDeployment,
+  aGateway,
   apiUrl,
   aPublication,
   aPublicationDraftDetails,
   aRestApi,
   failure,
+  listEnvelope,
   noContent,
   recorder,
   resource,
@@ -71,6 +74,7 @@ const API = 'loan-mgmt';
 const PORTAL = 'acme-portal';
 
 const api = aRestApi({
+  context: '/loans',
   description: 'Manage loan applications and repayments.',
   displayName: 'Loan Management Service',
   id: API,
@@ -119,7 +123,34 @@ function definitionTierRecorders() {
   };
 }
 
-/** The reads the page makes before it can render the form. */
+const GATEWAY_A = aGateway({ displayName: 'Gateway A', endpoints: ['https://gw-a.example.com'], id: 'gw-a' });
+const GATEWAY_B = aGateway({ displayName: 'Gateway B', endpoints: ['https://gw-b.example.com'], id: 'gw-b' });
+
+/** The gateways the API is associated with, each with a live deployment; the later one deployed most recently. */
+function serveDeployedGateways(...gateways: ReturnType<typeof aGateway>[]) {
+  server.use(
+    mswHttp.get(apiUrl(`/rest-apis/${API}/gateways`), () =>
+      HttpResponse.json(
+        listEnvelope(gateways.map((gateway) => ({ ...gateway, associatedAt: '2026-01-01T00:00:00Z', isDeployed: true }))),
+      ),
+    ),
+    mswHttp.get(apiUrl(`/rest-apis/${API}/deployments`), () =>
+      HttpResponse.json(
+        listEnvelope(
+          gateways.map((gateway, index) =>
+            aDeployment({
+              createdAt: `2026-01-0${index + 1}T00:00:00Z`,
+              deploymentId: `deployment-${gateway.id}`,
+              gatewayId: gateway.id,
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/** The reads the page makes before it can render the form; the API is deployed nowhere unless `serveDeployedGateways` says so. */
 function servePublicationState({
   draft,
   publication,
@@ -130,6 +161,8 @@ function servePublicationState({
   definitionRecorders?: ReturnType<typeof definitionTierRecorders>;
 } = {}) {
   server.use(
+    mswHttp.get(apiUrl(`/rest-apis/${API}/gateways`), () => HttpResponse.json(listEnvelope([]))),
+    mswHttp.get(apiUrl(`/rest-apis/${API}/deployments`), () => HttpResponse.json(listEnvelope([]))),
     resource('/rest-apis/:restApiId', api),
     draft ? resource(DRAFT_PATH, draft) : failure('get', DRAFT_PATH, 404, 'DRAFT_NOT_FOUND'),
     failure('get', DRAFT_DEFINITION_PATH, 404, 'DRAFT_NOT_FOUND', {
@@ -192,15 +225,62 @@ describe('PortalPublishPage', () => {
     expect(screen.getByDisplayValue('https://api.example.com/loans')).toBeInTheDocument();
   });
 
-  it("falls back to the API's own basic info when nothing is saved yet", async () => {
+  it("falls back to the API's own basic info, never its backend URL, when nothing is saved yet", async () => {
     servePublicationState();
 
     renderPage();
 
     expect(await screen.findByDisplayValue('Loan Management Service')).toBeInTheDocument();
     expect(screen.getByDisplayValue('1.0.0')).toBeInTheDocument();
-    // Falls back to the API's own upstream URL, not a draft/publication one.
-    expect(screen.getByDisplayValue('https://backend.internal/loans')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('https://backend.internal/loans')).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Production URL' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'Sandbox URL' })).toHaveValue('');
+  });
+
+  it('opens with the URL of the gateway deployed most recently when nothing is saved yet', async () => {
+    servePublicationState();
+    serveDeployedGateways(GATEWAY_A, GATEWAY_B);
+
+    renderPage();
+
+    expect(await screen.findByDisplayValue('https://gw-b.example.com/loans')).toBeInTheDocument();
+  });
+
+  it('offers every deployed gateway URL, and lets the default be replaced by another or cleared', async () => {
+    servePublicationState();
+    serveDeployedGateways(GATEWAY_A, GATEWAY_B);
+
+    const { user } = renderPage();
+
+    const production = await screen.findByRole('combobox', { name: 'Production URL' });
+    await user.click(production);
+    await user.click(await screen.findByRole('option', { name: /gw-a\.example\.com\/loans/ }));
+    expect(production).toHaveValue('https://gw-a.example.com/loans');
+
+    await user.clear(production);
+    expect(production).toHaveValue('');
+    await user.type(production, 'https://api.example.com/custom');
+    expect(production).toHaveValue('https://api.example.com/custom');
+  });
+
+  it('keeps a saved draft over the gateway default, even one with no URL', async () => {
+    servePublicationState({ draft: aPublicationDraftDetails({ endpoints: undefined }) });
+    serveDeployedGateways(GATEWAY_A);
+
+    renderPage();
+
+    await screen.findByDisplayValue('Loan Management Service');
+    expect(screen.getByRole('combobox', { name: 'Production URL' })).toHaveValue('');
+  });
+
+  it('opens with an empty Production URL when the gateways cannot be loaded', async () => {
+    servePublicationState();
+    server.use(failure('get', `/rest-apis/${API}/gateways`, 500, 'INTERNAL_ERROR'));
+
+    renderPage();
+
+    await screen.findByDisplayValue('Loan Management Service');
+    expect(screen.getByRole('combobox', { name: 'Production URL' })).toHaveValue('');
   });
 
   it('rejects a Production URL that is not a full URL', async () => {
@@ -208,7 +288,6 @@ describe('PortalPublishPage', () => {
     const { user } = renderPage();
 
     const production = await screen.findByRole('combobox', { name: 'Production URL' });
-    await user.clear(production);
     await user.type(production, 'gw.example.com');
     await user.tab();
 
@@ -220,7 +299,6 @@ describe('PortalPublishPage', () => {
     const { user } = renderPage();
 
     const production = await screen.findByRole('combobox', { name: 'Production URL' });
-    await user.clear(production);
     await user.type(production, 'gw');
     await user.tab();
     expect(await screen.findByText('Enter a full URL, for example https://api.example.com.')).toBeInTheDocument();

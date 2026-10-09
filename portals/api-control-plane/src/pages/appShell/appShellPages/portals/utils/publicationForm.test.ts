@@ -35,29 +35,36 @@ describe('resolveDraftFormValues', () => {
     });
     const publication = aPublication({ endpoints: { productionUrl: 'https://live.example.com' } });
 
-    expect(resolveDraftFormValues(draft, publication, api)).toMatchObject({
+    expect(resolveDraftFormValues(draft, publication, api, 'https://gw.example.com/loans')).toMatchObject({
       productionUrl: 'https://draft.example.com',
       sandboxUrl: 'https://draft-sandbox.example.com',
     });
-    expect(resolveDraftFormValues(undefined, publication, api)).toMatchObject({
+    expect(resolveDraftFormValues(undefined, publication, api, 'https://gw.example.com/loans')).toMatchObject({
       productionUrl: 'https://live.example.com',
       sandboxUrl: '',
     });
   });
 
-  it("falls back to the API's own name, version, description and backend URLs", () => {
-    expect(resolveDraftFormValues(undefined, undefined, api)).toEqual({
+  it('keeps the API name, version and description, and the gateway URL as the Production URL', () => {
+    expect(resolveDraftFormValues(undefined, undefined, api, 'https://gw.example.com/loans')).toEqual({
       description: 'Manage loans.',
       displayName: 'Loans',
-      productionUrl: 'https://backend.internal',
-      sandboxUrl: 'https://sandbox.backend.internal',
+      productionUrl: 'https://gw.example.com/loans',
+      sandboxUrl: '',
       version: '2.0.0',
       agentVisibility: 'VISIBLE',
     });
   });
 
+  it('never uses the API backend URLs, with or without a gateway URL', () => {
+    const { productionUrl, sandboxUrl } = resolveDraftFormValues(undefined, undefined, api);
+
+    expect(productionUrl).toBe('');
+    expect(sandboxUrl).toBe('');
+  });
+
   it('is empty when there is nothing at all', () => {
-    expect(resolveDraftFormValues(undefined, undefined, undefined)).toBe(emptyDraftFormValues);
+    expect(resolveDraftFormValues(undefined, undefined, undefined, 'https://gw.example.com/loans')).toBe(emptyDraftFormValues);
   });
 
   it('reads the agent visibility from the draft, then the publication, and defaults to VISIBLE', () => {

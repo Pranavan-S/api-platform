@@ -76,11 +76,16 @@ export const emptyDraftFormValues: DraftFormValues = {
  * published or not. No endpoint resolves this chain server-side, so it's
  * composed here from three independently-fetched tiers, each `undefined` when
  * that tier has nothing (a 404, not a real error — see `useApiPublicationDraft`).
+ *
+ * The API tier never reads the API's backend URL — consumers must call the
+ * gateway. It takes the gateway URL to suggest as `defaultProductionUrl`
+ * instead, and leaves the sandbox URL empty.
  */
 export const resolveDraftFormValues = (
   draft: PublicationDraftDetails | undefined,
   publication: Publication | undefined,
   api: RestApi | undefined,
+  defaultProductionUrl = '',
 ): DraftFormValues => {
   if (draft) {
     return {
@@ -107,8 +112,8 @@ export const resolveDraftFormValues = (
       displayName: api.displayName ?? '',
       version: api.version ?? '',
       description: api.description ?? '',
-      productionUrl: api.upstream?.main?.url ?? '',
-      sandboxUrl: api.upstream?.sandbox?.url ?? '',
+      productionUrl: defaultProductionUrl,
+      sandboxUrl: '',
       agentVisibility: DEFAULT_AGENT_VISIBILITY,
     };
   }
