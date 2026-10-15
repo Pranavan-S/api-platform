@@ -2641,6 +2641,10 @@
     "defaultMessage": "Updated {time}",
     "description": "Banner byline. {time} is a relative time such as \"2 days ago\"."
   },
+  "apiControlPlane.pages.appShell.appShellPages.portals.PortalPublishPage.removedDocuments": {
+    "defaultMessage": "A selected document no longer exists and was removed from the selection.",
+    "description": "Notice when a document deleted elsewhere is dropped from the selected documents."
+  },
   "apiControlPlane.pages.appShell.appShellPages.portals.PortalPublishPage.removedPlans": {
     "defaultMessage": "A selected subscription plan no longer exists and was removed from the selection.",
     "description": "Notice when a plan deleted elsewhere is dropped from the selected plans."
