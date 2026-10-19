@@ -1108,10 +1108,10 @@ export type FetchAgentCardRequest =
 // ----------------------------------------------------------------------------
 // Mirrors the Platform-API contract in platform-api/resources/openapi.yaml
 // (schemas Publication / PublicationDraftDetailsInput, paths
-// /api-portals/{apiPortalId}/apis/{apiType}/{apiId}/...). Platform-API only
-// serves publish/unpublish for apiType `rest-api` today; the `mcp-proxy`
-// equivalents land later, so these types are the UI-side contract the MCP
-// proxy calls in mcpProxiesApis.ts are already written against.
+// /api-portals/{apiPortalId}/apis/{apiType}/{apiId}/...). The draft routes are
+// shared by every apiType; publish/unpublish/deprecate are mounted per type, so
+// the `mcp-proxy` ones are the UI-side contract the MCP proxy calls in
+// mcpProxiesApis.ts are written against.
 // ============================================================================
 
 export type ApiPublicationStatus = 'PUBLISHED' | 'DEPRECATED';
@@ -1185,6 +1185,28 @@ export interface Publication extends PublicationDetailsCore, PublicationAuditFie
   docIds?: string[];
   hasThumbnail?: boolean;
   hasLandingPage?: boolean;
+}
+
+/**
+ * One API Portal's row in the `GET /api-publications` rollup (schema
+ * `PublicationSummaryItem`): the portal, plus this API's publication status on it.
+ */
+export interface PublicationSummaryItem {
+  /** The API Portal's handle. */
+  apiPortalId?: string;
+  apiPortalName?: string;
+  apiPortalDescription?: string;
+  apiPortalUrl?: string;
+  /** `NOT_PUBLISHED` when the API has no live listing on this portal. */
+  status?: ApiPublicationStatus | 'NOT_PUBLISHED';
+  /** Set when a draft exists for this (API, portal) pairing. */
+  draftUpdatedAt?: string;
+  publicationUpdatedAt?: string;
+}
+
+export interface PublicationSummaryResponse {
+  list: PublicationSummaryItem[];
+  pagination: Pagination;
 }
 
 /**
