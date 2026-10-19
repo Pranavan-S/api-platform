@@ -84,6 +84,8 @@ import EditAgentProxy from './pages/appShell/appShellPages/agentProxies/EditAgen
 import AgentProxiesDeploy from './pages/appShell/appShellPages/agentProxies/AgentProxiesDeploy';
 import ExternalServersNew from './pages/appShell/appShellPages/externalServers/ExternalServersNew';
 import ExternalServersOverview from './pages/appShell/appShellPages/externalServers/ExternalServersOverview';
+import McpPublishHubs from './pages/appShell/appShellPages/publish/McpPublishHubs';
+import McpPublishHubPage from './pages/appShell/appShellPages/publish/McpPublishHubPage';
 import ExternalServersDeploy from './pages/appShell/appShellPages/externalServers/ExternalServersDeploy';
 import EditExternalServer from './pages/appShell/appShellPages/externalServers/EditExternalServer';
 import { MCPServerValidationProvider } from './contexts/MCP';
@@ -767,6 +769,22 @@ function WorkspaceRoutes({ extensions = [] }: AppProps) {
               }
             />
             <Route
+              path="publish/:serverId"
+              element={
+                <WithPageBoundary>
+                  <McpPublishHubs />
+                </WithPageBoundary>
+              }
+            />
+            <Route
+              path="publish/:serverId/portals/:apiPortalId"
+              element={
+                <WithPageBoundary>
+                  <McpPublishHubPage />
+                </WithPageBoundary>
+              }
+            />
+            <Route
               path="gateways/*"
               element={
                 <WithPageBoundary>
@@ -1074,6 +1092,22 @@ function WorkspaceRoutes({ extensions = [] }: AppProps) {
                 element={
                   <WithPageBoundary>
                     <EditExternalServer />
+                  </WithPageBoundary>
+                }
+              />
+              <Route
+                path="publish/:serverId"
+                element={
+                  <WithPageBoundary>
+                    <McpPublishHubs />
+                  </WithPageBoundary>
+                }
+              />
+              <Route
+                path="publish/:serverId/portals/:apiPortalId"
+                element={
+                  <WithPageBoundary>
+                    <McpPublishHubPage />
                   </WithPageBoundary>
                 }
               />
