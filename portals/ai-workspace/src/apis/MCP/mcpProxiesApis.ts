@@ -209,29 +209,6 @@ export async function getMcpProxyApiPortalDraft(
 }
 
 /**
- * Save the publication draft and publish it, in one call.
- *
- * Handled by the BFF, which does the two Platform-API calls the contract needs
- * — PUT .../draft with `draft`, then the body-less POST .../publish — so a
- * saved draft is never left unpublished because the tab went away in between.
- * A rejected draft is relayed back and publish never runs.
- *
- * Returns the resulting listing — 201 on a first publish or a re-publish after
- * unpublish, 200 otherwise; both carry the same `Publication` body.
- */
-export async function publishMcpProxyToApiPortal(
-  apiPortalId: string,
-  mcpProxyId: string,
-  draft: PublicationDraftDetailsInput
-): Promise<Publication> {
-  return post<Publication>(
-    `/api-portals/${encodeURIComponent(apiPortalId)}/mcp-proxies/${encodeURIComponent(mcpProxyId)}/publish`,
-    draft,
-    BFF_API_BASE_URL
-  );
-}
-
-/**
  * Remove the listing (and its subscriptions and API keys) from the API Portal.
  *
  * A draft always survives: the publication is demoted into a draft when none
@@ -266,8 +243,8 @@ export async function listMcpProxyApiPortalPublications(
 /**
  * Replace the publication draft wholesale, creating it on first save.
  *
- * Unlike `publishMcpProxyToApiPortal` this does not publish: the page uses it
- * when it has to store the definition between the draft and the publish.
+ * Does not publish; the publish page follows it with the definition and then
+ * `publishSavedMcpProxyDraft`.
  */
 export async function saveMcpProxyApiPortalDraft(
   apiPortalId: string,
@@ -340,7 +317,6 @@ export const mcpProxiesApis = {
   deleteMCPServer,
   getMcpProxyApiPortalPublication,
   getMcpProxyApiPortalDraft,
-  publishMcpProxyToApiPortal,
   unpublishMcpProxyFromApiPortal,
   listMcpProxyApiPortalPublications,
   saveMcpProxyApiPortalDraft,
