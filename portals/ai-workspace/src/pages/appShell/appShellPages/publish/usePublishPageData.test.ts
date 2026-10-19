@@ -1,0 +1,185 @@
+/*
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { getApiPortal } from '../../../../apis/apiPortalApis';
+import { mcpProxiesApis } from '../../../../apis/MCP/mcpProxiesApis';
+import { usePublishPageData } from './usePublishPageData';
+
+vi.mock('../../../../apis/apiPortalApis', () => ({ getApiPortal: vi.fn() }));
+vi.mock('../../../../apis/MCP/mcpProxiesApis', () => ({
+  mcpProxiesApis: {
+    getMCPServer: vi.fn(),
+    getMcpProxyApiPortalDraft: vi.fn(),
+    getMcpProxyApiPortalPublication: vi.fn(),
+    getMcpProxyApiPortalDraftDefinition: vi.fn(),
+    getMcpProxyApiPortalPublicationDefinition: vi.fn(),
+  },
+}));
+const gateways = vi.hoisted(() => ({ value: { gateways: [] as unknown[], isLoading: false } }));
+vi.mock('../../../../hooks/useMcpDeployedGateways', () => ({ useMcpDeployedGateways: () => gateways.value }));
+vi.mock('../../../../utils/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } }));
+
+const api = vi.mocked(mcpProxiesApis);
+const notFound = () => Object.assign(new Error('not found'), { status: 404 });
+const serverError = () => Object.assign(new Error('boom'), { status: 500 });
+
+const SERVER = {
+  id: 'travel',
+  displayName: 'Travel MCP',
+  version: 'v1',
+  description: 'Trip tools',
+  context: '/travel',
+  capabilities: { tools: [{ name: 'from-proxy' }], resources: [], prompts: [] },
+};
+const DRAFT = { displayName: 'Draft name', version: 'v2' };
+const PUBLICATION = { displayName: 'Live name', version: 'v1', status: 'PUBLISHED' };
+
+const load = (want = false) => renderHook(() => usePublishPageData('hub', 'travel', 'org', want));
+
+const definitionOf = (seed: { definitionText: string } | undefined) => JSON.parse(seed!.definitionText);
+
+beforeEach(() => {
+  gateways.value = { gateways: [], isLoading: false };
+  api.getMCPServer.mockReset().mockResolvedValue(SERVER as never);
+  api.getMcpProxyApiPortalDraft.mockReset().mockRejectedValue(notFound());
+  api.getMcpProxyApiPortalPublication.mockReset().mockRejectedValue(notFound());
+  api.getMcpProxyApiPortalDraftDefinition.mockReset().mockRejectedValue(notFound());
+  api.getMcpProxyApiPortalPublicationDefinition.mockReset().mockRejectedValue(notFound());
+  vi.mocked(getApiPortal).mockReset().mockResolvedValue({ name: 'Main Hub' } as never);
+});
+
+describe('usePublishPageData', () => {
+  it('starts a first publish from the proxy itself, with the first gateway URL as its Production URL', async () => {
+    gateways.value = { gateways: [{ id: 'g', name: 'g', endpoints: ['gw.example.com'] }], isLoading: false };
+    const { result } = load();
+    expect(result.current.isLoading).toBe(true);
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.draft).toBeUndefined();
+    expect(result.current.publication).toBeUndefined();
+    expect(result.current.seed?.values).toMatchObject({
+      displayName: 'Travel MCP',
+      productionUrl: 'https://gw.example.com/travel/mcp',
+    });
+    expect(definitionOf(result.current.seed).tools).toEqual([{ name: 'from-proxy' }]);
+    expect(result.current.productionUrlOptions).toEqual([
+      { gatewayName: 'g', url: 'https://gw.example.com/travel/mcp' },
+    ]);
+  });
+
+  it('opens on the draft when there is one, ahead of the live listing', async () => {
+    api.getMcpProxyApiPortalDraft.mockResolvedValue(DRAFT as never);
+    api.getMcpProxyApiPortalPublication.mockResolvedValue(PUBLICATION as never);
+    api.getMcpProxyApiPortalDraftDefinition.mockResolvedValue({ tools: [{ name: 'from-draft' }] } as never);
+    const { result } = load();
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.seed?.values.displayName).toBe('Draft name');
+    expect(definitionOf(result.current.seed).tools).toEqual([{ name: 'from-draft' }]);
+    expect(api.getMcpProxyApiPortalPublicationDefinition).not.toHaveBeenCalled();
+  });
+
+  it('opens on the live listing\'s definition when the draft has none', async () => {
+    api.getMcpProxyApiPortalPublication.mockResolvedValue(PUBLICATION as never);
+    api.getMcpProxyApiPortalPublicationDefinition.mockResolvedValue({ tools: [{ name: 'live' }] } as never);
+    const { result } = load();
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.seed?.values.displayName).toBe('Live name');
+    expect(definitionOf(result.current.seed).tools).toEqual([{ name: 'live' }]);
+  });
+
+  it('keeps fields of a stored definition that the editor does not show', async () => {
+    api.getMcpProxyApiPortalDraftDefinition.mockResolvedValue({ tools: [], extra: { keep: true } } as never);
+    const { result } = load();
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(definitionOf(result.current.seed).extra).toEqual({ keep: true });
+  });
+
+  it('carries on without the hub\'s name when it cannot be read', async () => {
+    vi.mocked(getApiPortal).mockRejectedValue(serverError());
+    const { result } = load();
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.portal).toBeUndefined();
+    expect(result.current.error).toBeUndefined();
+    expect(result.current.seed).toBeDefined();
+  });
+
+  it('reports a failure that is not a missing draft, and offers no seed', async () => {
+    api.getMcpProxyApiPortalDraft.mockRejectedValue(serverError());
+    const { result } = load();
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.seed).toBeUndefined();
+  });
+
+  it('stays loading until the deployed gateways are known', async () => {
+    gateways.value = { gateways: [], isLoading: true };
+    const { result, rerender } = load();
+    await waitFor(() => expect(api.getMCPServer).toHaveBeenCalled());
+    await act(async () => {});
+    expect(result.current.isLoading).toBe(true);
+
+    gateways.value = { gateways: [], isLoading: false };
+    rerender();
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+  });
+
+  it('reads the live definition only when it is wanted and something is live', async () => {
+    api.getMcpProxyApiPortalPublication.mockResolvedValue(PUBLICATION as never);
+    api.getMcpProxyApiPortalPublicationDefinition.mockResolvedValue({ tools: [{ name: 'live' }] } as never);
+
+    const { result } = load(true);
+    await waitFor(() => expect(result.current.publishedDefinition.isLoading).toBe(false));
+    await waitFor(() => expect(result.current.publishedDefinition.definition).toEqual({ tools: [{ name: 'live' }] }));
+
+    const unwanted = load(false);
+    await waitFor(() => expect(unwanted.result.current.isLoading).toBe(false));
+    expect(unwanted.result.current.publishedDefinition.definition).toBeUndefined();
+  });
+
+  it('never reads a live definition when nothing is live', async () => {
+    const { result } = load(true);
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(api.getMcpProxyApiPortalPublicationDefinition).not.toHaveBeenCalled();
+  });
+
+  it('flags a live definition that cannot be read', async () => {
+    api.getMcpProxyApiPortalPublication.mockResolvedValue(PUBLICATION as never);
+    api.getMcpProxyApiPortalDraftDefinition.mockResolvedValue({} as never);
+    api.getMcpProxyApiPortalPublicationDefinition.mockRejectedValue(serverError());
+    const { result } = load(true);
+    await waitFor(() => expect(result.current.publishedDefinition.failed).toBe(true));
+  });
+
+  it('reads everything again on refetch', async () => {
+    const { result } = load();
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(api.getMCPServer).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.refetch());
+    await waitFor(() => expect(api.getMCPServer).toHaveBeenCalledTimes(2));
+  });
+
+  it('reads nothing until it knows the hub, the proxy and the organization', () => {
+    renderHook(() => usePublishPageData('hub', 'travel', '', false));
+    expect(api.getMCPServer).not.toHaveBeenCalled();
+  });
+});
