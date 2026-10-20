@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   refetch: vi.fn(),
   allowed: true,
   documents: { documents: undefined, failed: false } as { documents?: unknown[]; failed: boolean },
+  plans: { plans: undefined, failed: false } as { plans?: unknown[]; failed: boolean },
 }));
 
 vi.mock('../../../../apis/MCP/mcpProxiesApis', () => ({
@@ -44,6 +45,7 @@ vi.mock('../../../../apis/MCP/mcpProxiesApis', () => ({
 }));
 vi.mock('./usePublishPageData', () => ({ usePublishPageData: () => mocks.data }));
 vi.mock('../../../../hooks/useMcpProxyDocuments', () => ({ useMcpProxyDocuments: () => mocks.documents }));
+vi.mock('../../../../hooks/useSubscriptionPlans', () => ({ useSubscriptionPlans: () => mocks.plans }));
 vi.mock('../../../../hooks/usePublishProject', () => ({
   usePublishProject: () => ({
     organizationId: 'org-1',
@@ -77,8 +79,14 @@ const VALUES = {
   productionUrl: '',
   sandboxUrl: '',
   agentVisibility: 'VISIBLE',
+  subscriptionPlanIds: [] as string[],
   docIds: [] as string[],
 };
+const PLANS = [
+  { id: 'gold', displayName: 'Gold', status: 'ACTIVE' },
+  { id: 'silver', displayName: 'Silver', status: 'ACTIVE' },
+  { id: 'legacy', displayName: 'Legacy', status: 'INACTIVE' },
+];
 const DOCUMENTS = [
   { id: 'quickstart', type: 'HowTo', displayName: 'Quickstart' },
   { id: 'faq', type: 'Other', displayName: 'FAQ' },
@@ -128,6 +136,7 @@ beforeEach(() => {
   mocks.showSnackbar.mockReset();
   mocks.refetch.mockReset();
   mocks.documents = { documents: undefined, failed: false };
+  mocks.plans = { plans: undefined, failed: false };
   URL.createObjectURL = vi.fn(() => 'blob:thumbnail');
   URL.revokeObjectURL = vi.fn();
   Object.values(api).forEach((fn) => fn.mockReset().mockResolvedValue(undefined as never));
@@ -171,6 +180,93 @@ describe('what the page shows', () => {
     await user.click(screen.getByText('Tools'));
     expect(screen.getByRole('checkbox', { name: 'search' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'book' })).not.toBeChecked();
+  });
+});
+
+describe('the Subscription Plans tab', () => {
+  beforeEach(() => {
+    mocks.plans = { plans: PLANS, failed: false };
+  });
+
+  const seedPlans = (subscriptionPlanIds: string[]) =>
+    setData({ seed: { definitionText: DEFINITION, values: { ...VALUES, subscriptionPlanIds } } });
+
+  it('lists the plans on offer with the saved selection ticked', async () => {
+    seedPlans(['silver']);
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Subscription Plans' }));
+    expect(screen.getByRole('checkbox', { name: /Gold/ })).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByRole('checkbox', { name: /Silver/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.queryByRole('checkbox', { name: /Legacy/ })).not.toBeInTheDocument();
+  });
+
+  it('counts a changed selection as an edit, and saves it with the draft', async () => {
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Subscription Plans' }));
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled();
+    await user.click(screen.getByRole('checkbox', { name: /Gold/ }));
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+
+    await waitFor(() =>
+      expect(api.saveMcpProxyApiPortalDraft).toHaveBeenCalledWith(
+        'hub-1',
+        'travel',
+        expect.objectContaining({ subscriptionPlanIds: ['gold'] }),
+        expect.any(String)
+      )
+    );
+  });
+
+  it('drops a selected plan that no longer exists, and says so', async () => {
+    seedPlans(['gold', 'deleted']);
+    open();
+    await waitFor(() =>
+      expect(mocks.showSnackbar).toHaveBeenCalledWith(
+        'A selected subscription plan no longer exists and was removed from the selection.',
+        'warning'
+      )
+    );
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled();
+  });
+
+  it.each([
+    ['saving a draft', () => screen.getByRole('button', { name: 'Save Draft' })],
+    ['publishing', () => mainButton()],
+  ])('stops %s while an inactive plan is still selected, and shows the plans', async (_name, button) => {
+    seedPlans(['legacy']);
+    const { user } = open();
+    await user.type(screen.getByRole('textbox', { name: /^Version/ }), '2');
+    await user.click(button());
+
+    expect(mocks.showSnackbar).toHaveBeenCalledWith('Clear inactive plans to save or publish: "Legacy".', 'warning');
+    expect(screen.getByRole('tab', { name: 'Subscription Plans' })).toHaveAttribute('aria-selected', 'true');
+    expect(api.saveMcpProxyApiPortalDraft).not.toHaveBeenCalled();
+    expect(api.publishSavedMcpProxyDraft).not.toHaveBeenCalled();
+  });
+
+  it('saves again once the inactive plan is cleared', async () => {
+    seedPlans(['legacy']);
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Subscription Plans' }));
+    await user.click(screen.getByRole('checkbox', { name: /Legacy/ }));
+    await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+    await waitFor(() => expect(api.saveMcpProxyApiPortalDraft).toHaveBeenCalled());
+  });
+
+  it('lists only what the live version holds, without being able to change it', async () => {
+    setData({ publication: { ...LIVE, subscriptionPlanIds: ['silver'] } });
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Subscription Plans' }));
+    expect(screen.getByRole('checkbox', { name: /Silver/ })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: /Gold/ })).not.toBeInTheDocument();
+  });
+
+  it('says so when the plans cannot be read', async () => {
+    mocks.plans = { plans: undefined, failed: true };
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Subscription Plans' }));
+    expect(screen.getByText('Unable to load subscription plans.')).toBeInTheDocument();
   });
 });
 

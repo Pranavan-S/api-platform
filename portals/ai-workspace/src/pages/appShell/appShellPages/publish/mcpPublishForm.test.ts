@@ -43,6 +43,7 @@ const baseValues: DraftFormValues = {
   productionUrl: '',
   sandboxUrl: '',
   agentVisibility: 'VISIBLE',
+  subscriptionPlanIds: [],
   docIds: [],
 };
 
@@ -67,6 +68,7 @@ describe('resolveDraftFormValues', () => {
       productionUrl: 'https://gw/mcp',
       sandboxUrl: '',
       agentVisibility: 'VISIBLE',
+      subscriptionPlanIds: [],
       docIds: [],
     });
   });
@@ -84,6 +86,16 @@ describe('resolveDraftFormValues', () => {
       productionUrl: 'https://draft/mcp',
     });
     expect(resolveDraftFormValues(undefined, { displayName: 'Live', version: '1' }, server).displayName).toBe('Live');
+  });
+
+  it('reads the selected plans from the draft, then the live listing', () => {
+    expect(
+      resolveDraftFormValues({ subscriptionPlanIds: ['gold'] } as PublicationDraftDetails, undefined, server)
+        .subscriptionPlanIds
+    ).toEqual(['gold']);
+    expect(resolveDraftFormValues(undefined, { subscriptionPlanIds: ['silver'] }, server).subscriptionPlanIds).toEqual([
+      'silver',
+    ]);
   });
 
   it('reads the selected documents from the draft, then the live listing', () => {
@@ -124,9 +136,13 @@ describe('draftFormValuesToInput', () => {
     expect(input.endpoints).toEqual({ productionUrl: 'https://gw/mcp', sandboxUrl: undefined });
   });
 
-  it('sends the selected documents, even when none', () => {
-    expect(draftFormValuesToInput(baseValues).docIds).toEqual([]);
-    expect(draftFormValuesToInput({ ...baseValues, docIds: ['guide'] }).docIds).toEqual(['guide']);
+  it('sends the selected plans and documents, even when none', () => {
+    const none = draftFormValuesToInput(baseValues);
+    expect(none.subscriptionPlanIds).toEqual([]);
+    expect(none.docIds).toEqual([]);
+    const some = draftFormValuesToInput({ ...baseValues, subscriptionPlanIds: ['gold'], docIds: ['guide'] });
+    expect(some.subscriptionPlanIds).toEqual(['gold']);
+    expect(some.docIds).toEqual(['guide']);
   });
 
   it('carries over what the form does not show and drops audit fields', () => {
@@ -136,7 +152,6 @@ describe('draftFormValuesToInput', () => {
       tags: ['ai'],
       labels: ['default'],
       owners: { businessOwner: 'Pat' },
-      subscriptionPlanIds: ['gold'],
       createdBy: 'someone',
       hasThumbnail: true,
     };
@@ -145,7 +160,6 @@ describe('draftFormValuesToInput', () => {
       tags: ['ai'],
       labels: ['default'],
       owners: { businessOwner: 'Pat' },
-      subscriptionPlanIds: ['gold'],
     });
     expect(input).not.toHaveProperty('createdBy');
     expect(input).not.toHaveProperty('hasThumbnail');

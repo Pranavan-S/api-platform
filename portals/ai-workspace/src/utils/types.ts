@@ -1229,6 +1229,29 @@ export interface MCPProxyDocumentListResponse {
   pagination: Pagination;
 }
 
+/** One throttling limit of a subscription plan (schema `SubscriptionPlanLimit`). */
+export interface SubscriptionPlanLimit {
+  limitType?: 'REQUEST_COUNT' | 'BANDWIDTH' | 'TOTAL_TOKEN_COUNT';
+  timeUnit?: 'MINUTE' | 'HOUR' | 'DAY' | 'MONTH';
+  timeAmount?: number;
+  limitCount: number;
+  /** The unit of a bandwidth limit, e.g. `MB`. */
+  limitCountUnit?: string;
+}
+
+/** An organization's subscription plan (schema `SubscriptionPlan`); `id` is the handle `subscriptionPlanIds` carries. */
+export interface SubscriptionPlan {
+  id: string;
+  displayName: string;
+  status?: 'ACTIVE' | 'INACTIVE';
+  limits?: SubscriptionPlanLimit[];
+}
+
+export interface SubscriptionPlanListResponse {
+  list: SubscriptionPlan[];
+  pagination: Pagination;
+}
+
 /**
  * MCP Servers list API response
  */

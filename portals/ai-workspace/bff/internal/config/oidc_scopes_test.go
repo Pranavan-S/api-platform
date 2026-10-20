@@ -105,7 +105,12 @@ func specPaths() []string {
 var excludedScopeResources = []string{
 	"ap:rest_api:",
 	"ap:subscription:",
-	"ap:subscription_plan:",
+	// Plans are only read here, to pick the ones a listing offers; managing them is not
+	// surfaced, so ap:subscription_plan:read is the one scope of the family requested.
+	"ap:subscription_plan:create",
+	"ap:subscription_plan:update",
+	"ap:subscription_plan:delete",
+	"ap:subscription_plan:manage",
 	"ap:websub_api:",
 	"ap:webbroker_api:",
 	// Publishing a REST API to a portal, unlike the type-agnostic draft/publication

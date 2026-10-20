@@ -29,8 +29,8 @@ import type {
 /**
  * Form state and the pre-fill chain for the publish page — the same fields the
  * control plane's editor covers: name, version, description, the two endpoint
- * URLs, agent visibility and the selected documents. Tags, labels, owners and
- * plans belong to tabs this page does not show, so a save carries over whatever
+ * URLs, agent visibility and the selected plans and documents. Tags, labels and
+ * owners belong to tabs this page does not show, so a save carries over whatever
  * the stored draft (or live listing) already holds rather than clearing it.
  */
 
@@ -44,6 +44,8 @@ export type DraftFormValues = {
   productionUrl: string;
   sandboxUrl: string;
   agentVisibility: ApiPortalAgentVisibility;
+  /** Handles of the subscription plans the listing offers. */
+  subscriptionPlanIds: string[];
   /** Handles of the proxy's documents published with it. */
   docIds: string[];
 };
@@ -91,6 +93,7 @@ export const emptyDraftFormValues: DraftFormValues = {
   productionUrl: '',
   sandboxUrl: '',
   agentVisibility: DEFAULT_AGENT_VISIBILITY,
+  subscriptionPlanIds: [],
   docIds: [],
 };
 
@@ -113,6 +116,7 @@ const fromStored = (stored: StoredPublication): DraftFormValues => ({
   productionUrl: stored.endpoints?.productionUrl ?? '',
   sandboxUrl: stored.endpoints?.sandboxUrl ?? '',
   agentVisibility: stored.agentVisibility ?? DEFAULT_AGENT_VISIBILITY,
+  subscriptionPlanIds: stored.subscriptionPlanIds ?? [],
   docIds: stored.docIds ?? [],
 });
 
@@ -138,13 +142,14 @@ export const resolveDraftFormValues = (
       productionUrl: defaultProductionUrl ?? '',
       sandboxUrl: '',
       agentVisibility: DEFAULT_AGENT_VISIBILITY,
+      subscriptionPlanIds: [],
       docIds: [],
     };
   }
   return emptyDraftFormValues;
 };
 
-/** A selection is a set: the server ignores order, and a document toggled off and on moves to the end. */
+/** A selection is a set: the server ignores order, and an item toggled off and on moves to the end. */
 export const sameSelection = (a: string[], b: string[]): boolean => {
   const members = new Set(a);
   return members.size === new Set(b).size && b.every((id) => members.has(id));
@@ -159,8 +164,8 @@ const trimmedOrUndefined = (value: string): string | undefined => {
  * The PUT body for `.../draft`. A draft save replaces everything, so the fields
  * this form does not show are carried over from `stored`; the read-only audit
  * and asset fields it also holds are left out. Empty strings are sent as
- * `undefined`, so an untouched field reads back as unset. `docIds` is always
- * sent, even as `[]`, since leaving it out would clear the selection.
+ * `undefined`, so an untouched field reads back as unset. The plan and document
+ * selections are always sent, even as `[]`, since leaving one out would clear it.
  */
 export const draftFormValuesToInput = (
   values: DraftFormValues,
@@ -177,7 +182,7 @@ export const draftFormValuesToInput = (
     tags: stored?.tags,
     labels: stored?.labels,
     owners: stored?.owners,
-    subscriptionPlanIds: stored?.subscriptionPlanIds,
+    subscriptionPlanIds: values.subscriptionPlanIds,
     docIds: values.docIds,
   };
 };

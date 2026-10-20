@@ -33,6 +33,7 @@ import { useFrozenWhile } from '../../../../hooks/useFrozenWhile';
 import { usePublishProject } from '../../../../hooks/usePublishProject';
 import { useMcpProxyDocuments } from '../../../../hooks/useMcpProxyDocuments';
 import { useObjectUrl } from '../../../../hooks/useObjectUrl';
+import { useSubscriptionPlans } from '../../../../hooks/useSubscriptionPlans';
 import { PLATFORM_API_BASE_URL } from '../../../../paths';
 import { getErrorCode, getErrorMessage } from '../../../../utils/apiError';
 
@@ -59,6 +60,7 @@ import { PublicationVersionCard, type PublicationVersionTone } from './Publicati
 import { PublicationVersionToggle } from './PublicationVersionToggle';
 import { PublishActionsBar } from './PublishActionsBar';
 import { ErrorState, LoadingState } from './PublishStates';
+import { SubscriptionPlansTab } from './SubscriptionPlansTab';
 import { usePublishAssets } from './usePublishAssets';
 import { usePublishPageData } from './usePublishPageData';
 
@@ -110,6 +112,15 @@ const messages = defineMessages({
   deprecated: {
     id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.deprecated',
     defaultMessage: 'Deprecated on {portal}.',
+  },
+  removedPlans: {
+    id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.removedPlans',
+    defaultMessage: 'A selected subscription plan no longer exists and was removed from the selection.',
+  },
+  inactivePlansBlock: {
+    id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.inactivePlansBlock',
+    defaultMessage: 'Clear inactive plans to save or publish: {names}.',
+    description: 'Warning when Save Draft or Publish is blocked because the selection still holds inactive plans. {names} is a comma-separated list of plan names.',
   },
   removedDocuments: {
     id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.removedDocuments',
@@ -206,7 +217,7 @@ const ACTION_BAR_HEIGHT = 40;
 /** The fields that show a validation message. */
 const FORM_FIELDS: DraftFormField[] = ['displayName', 'version', 'productionUrl', 'sandboxUrl'];
 
-type PublishTab = 'details' | 'capabilities' | 'documentations' | 'landingPage';
+type PublishTab = 'details' | 'capabilities' | 'subscriptionPlans' | 'documentations' | 'landingPage';
 
 /** Which action is currently in flight, so the right button (and only that one) shows busy. */
 type PendingAction = 'idle' | 'saving' | 'publishing' | 'unpublishing' | 'deprecating';
@@ -287,7 +298,8 @@ export default function McpPublishHubPage(): React.JSX.Element {
   const [confirmingUnpublish, setConfirmingUnpublish] = useState(false);
   const [confirmingDeprecate, setConfirmingDeprecate] = useState(false);
   const [initialized, setInitialized] = useState(false);
-  // Read once the Documentation tab is open or a selection is held to check it against.
+  // Each is read once its tab is open or a selection is held to check it against.
+  const plans = useSubscriptionPlans(tab === 'subscriptionPlans' || values.subscriptionPlanIds.length > 0);
   const documents = useMcpProxyDocuments(serverId, tab === 'documentations' || values.docIds.length > 0);
 
   // Seeds the editor once, when everything has settled (success or the expected
@@ -303,6 +315,23 @@ export default function McpPublishHubPage(): React.JSX.Element {
 
   const thumbnailUrl = useObjectUrl(assets.thumbnail);
   const publishedThumbnailUrl = useObjectUrl(data.publishedThumbnail);
+
+  // A plan deleted elsewhere has no card to clear but would still be submitted, so drop it and
+  // say so.
+  useEffect(() => {
+    if (!initialized || !plans.plans) return;
+    const known = new Set(plans.plans.map((plan) => plan.id));
+    const isKnown = (id: string) => known.has(id);
+    if (values.subscriptionPlanIds.every(isKnown)) return;
+    const withoutUnknown = (current: DraftFormValues) => ({
+      ...current,
+      subscriptionPlanIds: current.subscriptionPlanIds.filter(isKnown),
+    });
+    setValues(withoutUnknown);
+    // The server dropped it from the saved draft too, so this isn't an edit to save.
+    setSaved((current) => ({ ...current, values: withoutUnknown(current.values) }));
+    showSnackbar(intl.formatMessage(messages.removedPlans), 'warning');
+  }, [initialized, plans.plans, values.subscriptionPlanIds, intl, showSnackbar]);
 
   // A document deleted elsewhere has no checkbox to clear but would still be submitted, so drop it
   // and say so.
@@ -379,6 +408,21 @@ export default function McpPublishHubPage(): React.JSX.Element {
     setValues(next);
   };
 
+  /**
+   * The server refuses a selection that holds an inactive plan; stop here and show the plans
+   * instead of failing the request. Skipped while the plan list is unavailable (the server
+   * still checks).
+   */
+  const blockedByInactivePlans = (): boolean => {
+    const selected = new Set(values.subscriptionPlanIds);
+    const inactive = (plans.plans ?? []).filter((plan) => selected.has(plan.id) && plan.status !== 'ACTIVE');
+    if (inactive.length === 0) return false;
+    setTab('subscriptionPlans');
+    const names = inactive.map((plan) => `"${plan.displayName}"`).join(', ');
+    showSnackbar(intl.formatMessage(messages.inactivePlansBlock, { names }), 'warning');
+    return true;
+  };
+
   /** Saves the MCP Proxy Details fields alone. False, untouched, when the form itself is invalid. */
   const saveDetails = async (): Promise<boolean> => {
     if (formInvalid) {
@@ -436,6 +480,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
 
   const handleSaveDraft = () =>
     runAction('saving', intl.formatMessage(messages.saveFailed), async () => {
+      if (blockedByInactivePlans()) return;
       if (!(await saveDetails())) return;
       const definitionSaved = await saveDefinition();
       await assets.saveThumbnail();
@@ -465,6 +510,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
 
   const handlePublish = () =>
     runAction('publishing', intl.formatMessage(messages.publishFailed), async () => {
+      if (blockedByInactivePlans()) return;
       if (!(await saveDetails())) return;
       // Publish requires a saved, parseable definition — never proceed on a
       // partial save, which would publish whatever definition was already
@@ -505,6 +551,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
   };
 
   const publishedValues = resolveDraftFormValues(undefined, publication, undefined);
+  const savedPlanIds = resolveDraftFormValues(draft, publication, undefined).subscriptionPlanIds;
 
   // Only when it last changed: the switch already says which version this is, and the form shows its number.
   const draftBannerMeta = (): ReactNode => {
@@ -533,6 +580,9 @@ export default function McpPublishHubPage(): React.JSX.Element {
 
   const renderContent = () => {
     if (showingPublished) {
+      if (tab === 'subscriptionPlans') {
+        return <SubscriptionPlansTab failed={plans.failed} plans={plans.plans} readOnly values={publishedValues} />;
+      }
       if (tab === 'documentations') {
         return (
           <DocumentsTab
@@ -561,6 +611,18 @@ export default function McpPublishHubPage(): React.JSX.Element {
         <ErrorState message={intl.formatMessage(messages.publishedSpecFailed)} />
       ) : (
         <CapabilitiesTab readOnly text={definitionToText(data.publishedDefinition.definition)} />
+      );
+    }
+    if (tab === 'subscriptionPlans') {
+      return (
+        <SubscriptionPlansTab
+          disabled={pendingAction !== 'idle'}
+          failed={plans.failed}
+          onChange={handleChange}
+          plans={plans.plans}
+          savedPlanIds={savedPlanIds}
+          values={values}
+        />
       );
     }
     if (tab === 'documentations') {
@@ -653,7 +715,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
             >
               <Tab label={intl.formatMessage(messages.tabDetails)} value="details" />
               <Tab label={intl.formatMessage(messages.tabCapabilities)} value="capabilities" />
-              <Tab disabled label={intl.formatMessage(messages.tabPlans)} value="subscriptionPlans" />
+              <Tab label={intl.formatMessage(messages.tabPlans)} value="subscriptionPlans" />
               <Tab label={intl.formatMessage(messages.tabDocs)} value="documentations" />
               <Tab label={intl.formatMessage(messages.tabLanding)} value="landingPage" />
             </Tabs>
