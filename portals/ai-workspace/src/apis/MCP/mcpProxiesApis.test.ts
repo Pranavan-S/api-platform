@@ -17,15 +17,23 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { get, post, put } from '../../clients/choreoApiClient';
+import { get, getBlob, getText, post, put, putForm, putText } from '../../clients/choreoApiClient';
 import {
   deprecateMcpProxyOnApiPortal,
   getMcpProxyApiPortalDraftDefinition,
+  getMcpProxyApiPortalDraftLandingPage,
+  getMcpProxyApiPortalDraftThumbnail,
   getMcpProxyApiPortalPublicationDefinition,
+  getMcpProxyApiPortalPublicationLandingPage,
+  getMcpProxyApiPortalPublicationThumbnail,
+  getMcpProxyDocumentContent,
   listMcpProxyApiPortalPublications,
+  listMcpProxyDocuments,
   publishSavedMcpProxyDraft,
   saveMcpProxyApiPortalDraft,
   saveMcpProxyApiPortalDraftDefinition,
+  saveMcpProxyApiPortalDraftLandingPage,
+  saveMcpProxyApiPortalDraftThumbnail,
   unpublishMcpProxyFromApiPortal,
 } from './mcpProxiesApis';
 
@@ -34,6 +42,10 @@ vi.mock('../../clients/choreoApiClient', () => ({
   post: vi.fn(),
   put: vi.fn(),
   del: vi.fn(),
+  getBlob: vi.fn(),
+  getText: vi.fn(),
+  putForm: vi.fn(),
+  putText: vi.fn(),
 }));
 vi.mock('../../utils/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } }));
 
@@ -44,6 +56,10 @@ beforeEach(() => {
   vi.mocked(get).mockReset();
   vi.mocked(post).mockReset();
   vi.mocked(put).mockReset();
+  vi.mocked(getBlob).mockReset();
+  vi.mocked(getText).mockReset();
+  vi.mocked(putForm).mockReset();
+  vi.mocked(putText).mockReset();
 });
 
 describe('MCP proxy API portal publication calls', () => {
@@ -82,5 +98,68 @@ describe('MCP proxy API portal publication calls', () => {
     await getMcpProxyApiPortalPublicationDefinition('hub/1', 'server 1', BASE);
     expect(get).toHaveBeenNthCalledWith(1, `${ROOT}/draft/definition`, undefined, BASE);
     expect(get).toHaveBeenNthCalledWith(2, `${ROOT}/publication/definition`, undefined, BASE);
+  });
+});
+
+describe('MCP proxy landing page and thumbnail calls', () => {
+  it('reads the draft and live landing pages as text', async () => {
+    vi.mocked(getText).mockResolvedValue('# Travel');
+    await expect(getMcpProxyApiPortalDraftLandingPage('hub/1', 'server 1', BASE)).resolves.toBe('# Travel');
+    await getMcpProxyApiPortalPublicationLandingPage('hub/1', 'server 1', BASE);
+    expect(getText).toHaveBeenNthCalledWith(1, `${ROOT}/draft/landing-page`, BASE);
+    expect(getText).toHaveBeenNthCalledWith(2, `${ROOT}/publication/landing-page`, BASE);
+  });
+
+  it('saves the landing page as Markdown', async () => {
+    await saveMcpProxyApiPortalDraftLandingPage('hub/1', 'server 1', '# Travel', BASE);
+    expect(putText).toHaveBeenCalledWith(`${ROOT}/draft/landing-page`, '# Travel', 'text/markdown', BASE);
+  });
+
+  it('reads the draft and live thumbnails as images', async () => {
+    const image = new Blob(['png'], { type: 'image/png' });
+    vi.mocked(getBlob).mockResolvedValue(image);
+    await expect(getMcpProxyApiPortalDraftThumbnail('hub/1', 'server 1', BASE)).resolves.toBe(image);
+    await getMcpProxyApiPortalPublicationThumbnail('hub/1', 'server 1', BASE);
+    expect(getBlob).toHaveBeenNthCalledWith(1, `${ROOT}/draft/thumbnail`, BASE);
+    expect(getBlob).toHaveBeenNthCalledWith(2, `${ROOT}/publication/thumbnail`, BASE);
+  });
+
+  it('uploads the thumbnail as the multipart `file` field', async () => {
+    const image = new Blob(['png'], { type: 'image/png' });
+    await saveMcpProxyApiPortalDraftThumbnail('hub/1', 'server 1', image, BASE);
+    const [path, form, base] = vi.mocked(putForm).mock.calls[0];
+    expect(path).toBe(`${ROOT}/draft/thumbnail`);
+    expect((form as FormData).get('file')).toBeInstanceOf(Blob);
+    expect(base).toBe(BASE);
+  });
+});
+
+describe('MCP proxy document calls', () => {
+  const DOCS = '/apis/mcp-proxy/server%201/docs';
+  const doc = (id: string) => ({ id, type: 'DOC_Other', displayName: id });
+
+  it('lists every document, paging until the total is held', async () => {
+    vi.mocked(get)
+      .mockResolvedValueOnce({ list: [doc('a'), doc('b')], pagination: { total: 3, offset: 0, limit: 100 } })
+      .mockResolvedValueOnce({ list: [doc('c')], pagination: { total: 3, offset: 2, limit: 100 } });
+    const documents = await listMcpProxyDocuments('server 1', BASE);
+    expect(documents.map((d) => d.id)).toEqual(['a', 'b', 'c']);
+    expect(get).toHaveBeenNthCalledWith(1, DOCS, { limit: 100, offset: 0 }, BASE);
+    expect(get).toHaveBeenNthCalledWith(2, DOCS, { limit: 100, offset: 2 }, BASE);
+  });
+
+  it('stops on an empty page even when the total says more', async () => {
+    vi.mocked(get).mockResolvedValueOnce({ list: [], pagination: { total: 5, offset: 0, limit: 100 } });
+    await expect(listMcpProxyDocuments('server 1', BASE)).resolves.toEqual([]);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads one document body with its content type', async () => {
+    vi.mocked(getBlob).mockResolvedValue({ type: 'text/markdown', text: async () => '# Guide' } as Blob);
+    await expect(getMcpProxyDocumentContent('server 1', 'how to', BASE)).resolves.toEqual({
+      contentType: 'text/markdown',
+      text: '# Guide',
+    });
+    expect(getBlob).toHaveBeenCalledWith(`${DOCS}/how%20to/content`, BASE);
   });
 });

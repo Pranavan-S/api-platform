@@ -16,11 +16,14 @@
  * under the License.
  */
 
-import { get, post, put, del } from '../../clients/choreoApiClient';
+import { get, getBlob, getText, post, put, putForm, putText, del } from '../../clients/choreoApiClient';
 import { logger } from '../../utils/logger';
 import { BFF_API_BASE_URL } from '../../paths';
 
 import type {
+  MCPProxyDocument,
+  MCPProxyDocumentContent,
+  MCPProxyDocumentListResponse,
   MCPServer,
   MCPServerListResponse,
   CreateMCPServerRequest,
@@ -309,6 +312,106 @@ export async function getMcpProxyApiPortalPublicationDefinition(
   );
 }
 
+/** The draft's landing page as Markdown; 404 when it has none (`hasLandingPage`). */
+export async function getMcpProxyApiPortalDraftLandingPage(
+  apiPortalId: string,
+  mcpProxyId: string,
+  baseUrl: string
+): Promise<string> {
+  return getText(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/draft/landing-page'), baseUrl);
+}
+
+/** Create or replace the draft's landing page. The draft must already exist or the call is a 404. */
+export async function saveMcpProxyApiPortalDraftLandingPage(
+  apiPortalId: string,
+  mcpProxyId: string,
+  markdown: string,
+  baseUrl: string
+): Promise<void> {
+  await putText<void>(
+    mcpProxyPortalPath(apiPortalId, mcpProxyId, '/draft/landing-page'),
+    markdown,
+    'text/markdown',
+    baseUrl
+  );
+}
+
+/** The landing page on the live listing as Markdown; 404 when it has none (`hasLandingPage`). */
+export async function getMcpProxyApiPortalPublicationLandingPage(
+  apiPortalId: string,
+  mcpProxyId: string,
+  baseUrl: string
+): Promise<string> {
+  return getText(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/publication/landing-page'), baseUrl);
+}
+
+/** The draft's thumbnail; 404 when it has none (`hasThumbnail`). */
+export async function getMcpProxyApiPortalDraftThumbnail(
+  apiPortalId: string,
+  mcpProxyId: string,
+  baseUrl: string
+): Promise<Blob> {
+  return getBlob(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/draft/thumbnail'), baseUrl);
+}
+
+/**
+ * Create or replace the draft's thumbnail, as a multipart `file`. The draft must already
+ * exist or the call is a 404; the server accepts only JPEG and PNG.
+ */
+export async function saveMcpProxyApiPortalDraftThumbnail(
+  apiPortalId: string,
+  mcpProxyId: string,
+  file: Blob,
+  baseUrl: string
+): Promise<void> {
+  const form = new FormData();
+  form.append('file', file);
+  await putForm<void>(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/draft/thumbnail'), form, baseUrl);
+}
+
+/** The thumbnail on the live listing; 404 when it has none (`hasThumbnail`). */
+export async function getMcpProxyApiPortalPublicationThumbnail(
+  apiPortalId: string,
+  mcpProxyId: string,
+  baseUrl: string
+): Promise<Blob> {
+  return getBlob(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/publication/thumbnail'), baseUrl);
+}
+
+/** The server's maximum page size for a document list. */
+const DOCUMENTS_PAGE_SIZE = 100;
+
+/**
+ * Every document of the MCP proxy, paging through the list until the server's total is
+ * held. Scope: `ap:docs:read`.
+ */
+export async function listMcpProxyDocuments(mcpProxyId: string, baseUrl: string): Promise<MCPProxyDocument[]> {
+  const path = `/apis/${MCP_PROXY_API_TYPE}/${encodeURIComponent(mcpProxyId)}/docs`;
+  const documents: MCPProxyDocument[] = [];
+  for (;;) {
+    const page = await get<MCPProxyDocumentListResponse>(
+      path,
+      { limit: DOCUMENTS_PAGE_SIZE, offset: documents.length },
+      baseUrl
+    );
+    documents.push(...page.list);
+    if (page.list.length === 0 || documents.length >= page.pagination.total) return documents;
+  }
+}
+
+/** One document's body as stored, with the content type it was stored under. */
+export async function getMcpProxyDocumentContent(
+  mcpProxyId: string,
+  docId: string,
+  baseUrl: string
+): Promise<MCPProxyDocumentContent> {
+  const body = await getBlob(
+    `/apis/${MCP_PROXY_API_TYPE}/${encodeURIComponent(mcpProxyId)}/docs/${encodeURIComponent(docId)}/content`,
+    baseUrl
+  );
+  return { contentType: body.type, text: await body.text() };
+}
+
 export const mcpProxiesApis = {
   createMCPServer,
   getMCPServers,
@@ -325,4 +428,12 @@ export const mcpProxiesApis = {
   deprecateMcpProxyOnApiPortal,
   getMcpProxyApiPortalDraftDefinition,
   getMcpProxyApiPortalPublicationDefinition,
+  getMcpProxyApiPortalDraftLandingPage,
+  saveMcpProxyApiPortalDraftLandingPage,
+  getMcpProxyApiPortalPublicationLandingPage,
+  getMcpProxyApiPortalDraftThumbnail,
+  saveMcpProxyApiPortalDraftThumbnail,
+  getMcpProxyApiPortalPublicationThumbnail,
+  listMcpProxyDocuments,
+  getMcpProxyDocumentContent,
 };

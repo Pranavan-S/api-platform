@@ -82,6 +82,22 @@ const buildUrl = (
   return url.toString();
 };
 
+/** Throws the API error a failed response describes. */
+const rejectFailedResponse = async (res: Response, method: HttpMethod, url: string): Promise<never> => {
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch { /* body not JSON */ }
+  const err = buildApiError(res.status, data, `HTTP ${res.status}`);
+  // Pass the code so only a genuine UNAUTHORIZED tears down the session.
+  handleUnauthorizedResponse(res, err.code);
+  logger.error(
+    `[platformApiClient] ${method} ${url} → ${res.status} [${err.code ?? 'UNKNOWN'}]: ${err.message}`
+    + (err.trackingId ? ` (trackingId: ${err.trackingId})` : ''),
+  );
+  throw err;
+};
+
 /**
  * Core fetch wrapper — all HTTP methods.
  */
@@ -101,20 +117,7 @@ export const request = async <T>(config: ApiRequestConfig): Promise<T> => {
       : undefined,
   });
 
-  if (!res.ok) {
-    let data: unknown;
-    try {
-      data = await res.json();
-    } catch { /* body not JSON */ }
-    const err = buildApiError(res.status, data, `HTTP ${res.status}`);
-    // Pass the code so only a genuine UNAUTHORIZED tears down the session.
-    handleUnauthorizedResponse(res, err.code);
-    logger.error(
-      `[platformApiClient] ${method} ${url} → ${res.status} [${err.code ?? 'UNKNOWN'}]: ${err.message}`
-      + (err.trackingId ? ` (trackingId: ${err.trackingId})` : ''),
-    );
-    throw err;
-  }
+  if (!res.ok) return rejectFailedResponse(res, method, url);
 
   // 204 No Content
   if (res.status === 204) return undefined as T;
@@ -135,46 +138,63 @@ export const post = <T>(
 ): Promise<T> => request<T>({ path, method: 'POST', data, baseUrl });
 
 /**
- * POST with multipart/form-data body (e.g. for the secrets endpoint).
- * Omits Content-Type so the browser sets it with the correct boundary.
+ * Sends a body that is not JSON: a multipart form (the browser sets its boundary, so no
+ * Content-Type) or text with the Content-Type given in `headers`. The BFF injects the
+ * bearer token; we only add the CSRF header for this state-mutating call. An empty
+ * (204) response resolves to `undefined`.
  */
-const sendForm = async <T>(
+const sendBody = async <T>(
   method: 'POST' | 'PUT',
   path: string,
-  form: FormData,
+  body: FormData | string,
+  headers: Record<string, string>,
   baseUrl?: string,
 ): Promise<T> => {
   const resolvedBase = baseUrl || PLATFORM_API_BASE_URL;
   const url = buildUrl(path, resolvedBase);
-  // No Content-Type — the browser sets the multipart boundary. The BFF injects
-  // the bearer token; we only add the CSRF header for this state-mutating call.
-  const headers: Record<string, string> = { Accept: 'application/json', [CSRF_HEADER]: CSRF_VALUE };
 
-  const res = await fetch(url, { method, credentials: 'include', headers, body: form });
+  const res = await fetch(url, {
+    method,
+    credentials: 'include',
+    headers: { Accept: 'application/json', [CSRF_HEADER]: CSRF_VALUE, ...headers },
+    body,
+  });
 
-  if (!res.ok) {
-    let data: unknown;
-    try {
-      data = await res.json();
-    } catch { /* body not JSON */ }
-    const err = buildApiError(res.status, data, `HTTP ${res.status}`);
-    // Pass the code so only a genuine UNAUTHORIZED tears down the session.
-    handleUnauthorizedResponse(res, err.code);
-    logger.error(
-      `[platformApiClient] ${method} ${url} → ${res.status} [${err.code ?? 'UNKNOWN'}]: ${err.message}`
-      + (err.trackingId ? ` (trackingId: ${err.trackingId})` : ''),
-    );
-    throw err;
-  }
-
+  if (!res.ok) return rejectFailedResponse(res, method, url);
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 };
 
+/** POST with a multipart/form-data body (e.g. for the secrets endpoint). */
 export const postForm = <T>(path: string, form: FormData, baseUrl?: string): Promise<T> =>
-  sendForm<T>('POST', path, form, baseUrl);
+  sendBody<T>('POST', path, form, {}, baseUrl);
 
 export const putForm = <T>(path: string, form: FormData, baseUrl?: string): Promise<T> =>
-  sendForm<T>('PUT', path, form, baseUrl);
+  sendBody<T>('PUT', path, form, {}, baseUrl);
+
+/** PUT a text body (e.g. Markdown) as `contentType`. */
+export const putText = <T>(path: string, text: string, contentType: string, baseUrl?: string): Promise<T> =>
+  sendBody<T>('PUT', path, text, { 'Content-Type': contentType }, baseUrl);
+
+/** GET a response that is not JSON; `read` takes its body. */
+const getBody = async <T>(
+  path: string,
+  read: (res: Response) => Promise<T>,
+  baseUrl?: string,
+): Promise<T> => {
+  const url = buildUrl(path, baseUrl || PLATFORM_API_BASE_URL);
+  const res = await fetch(url, { method: 'GET', credentials: 'include', headers: { [CSRF_HEADER]: CSRF_VALUE } });
+  if (!res.ok) return rejectFailedResponse(res, 'GET', url);
+  return read(res);
+};
+
+/** GET a text body (e.g. Markdown). */
+export const getText = (path: string, baseUrl?: string): Promise<string> =>
+  getBody(path, (res) => res.text(), baseUrl);
+
+/** GET a binary body (e.g. an image). */
+export const getBlob = (path: string, baseUrl?: string): Promise<Blob> =>
+  getBody(path, (res) => res.blob(), baseUrl);
 
 export const put = <T>(
   path: string,
