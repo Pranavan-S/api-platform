@@ -126,6 +126,50 @@ func TestValidateDefinitionContent_GraphQLAPI(t *testing.T) {
 	}
 }
 
+// TestValidateDefinitionContent_MCPProxy checks the mcp-proxy validator: only a JSON or
+// YAML object listing at least one named tool, resource or prompt can be published.
+func TestValidateDefinitionContent_MCPProxy(t *testing.T) {
+	tests := []struct {
+		name       string
+		definition *model.PublicationContent
+		wantErr    string
+	}{
+		{"tools only", contentOf("application/json", `{"tools":[{"name":"echo"}]}`), ""},
+		{"all three lists", contentOf("application/json", `{"tools":[{"name":"t"}],"resources":[{"name":"r","uri":"file:///r"}],"prompts":[{"name":"p"}]}`), ""},
+		{"yaml", contentOf("application/yaml", "tools:\n  - name: echo\n"), ""},
+		{"unknown keys are left alone", contentOf("application/json", `{"tools":[{"name":"t"}],"extra":1}`), ""},
+		{"null list is skipped", contentOf("application/json", `{"tools":[{"name":"t"}],"prompts":null}`), ""},
+		{"nil definition", nil, "definition is required"},
+		{"wrong content type", contentOf("application/graphql", "type Query { a: String }"), "must be application/json or application/yaml"},
+		{"not JSON", contentOf("application/json", "{oops"), "must be an object"},
+		{"JSON null", contentOf("application/json", "null"), "must be an object"},
+		{"JSON array", contentOf("application/json", `[{"name":"t"}]`), "must be an object"},
+		{"empty object", contentOf("application/json", "{}"), "at least one tool, resource or prompt"},
+		{"empty lists", contentOf("application/json", `{"tools":[],"resources":[],"prompts":[]}`), "at least one tool, resource or prompt"},
+		{"list is not a list", contentOf("application/json", `{"tools":{"name":"t"}}`), "tools must be a list"},
+		{"entry is not an object", contentOf("application/json", `{"tools":["echo"]}`), "Entry 1 of the definition's tools must be an object with a name"},
+		{"entry without a name", contentOf("application/json", `{"tools":[{"name":"ok"}],"prompts":[{"description":"d"}]}`), "Entry 1 of the definition's prompts"},
+		{"blank name", contentOf("application/json", `{"tools":[{"name":" "}]}`), "Entry 1 of the definition's tools"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateDefinitionContent(constants.PublicationAPITypeMCPProxy, tt.definition)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("got %v, want no error", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("got %v, want an error containing %q", err, tt.wantErr)
+			}
+			if apperror.APIPublicationTypeUnsupported.Is(err) {
+				t.Fatalf("got %v, want mcp-proxy to be a supported publication type", err)
+			}
+		})
+	}
+}
+
 // TestValidateDefinitionContent_RestAPIDelegates checks that a non-empty
 // rest-api definition is dispatched to validateRestAPIDefinition.
 func TestValidateDefinitionContent_RestAPIDelegates(t *testing.T) {

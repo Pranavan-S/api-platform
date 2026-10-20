@@ -18,6 +18,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -25,6 +26,8 @@ import (
 	"github.com/wso2/api-platform/platform-api/internal/constants"
 	"github.com/wso2/api-platform/platform-api/internal/model"
 	"github.com/wso2/api-platform/platform-api/internal/utils"
+
+	"gopkg.in/yaml.v3"
 )
 
 // restAPITypeValue is the type-agnostic path value for RestApi publications,
@@ -44,6 +47,7 @@ type definitionValidator func(contentType string, data []byte) error
 var definitionValidators = map[string]definitionValidator{
 	restAPITypeValue:                       validateRestAPIDefinition,
 	constants.PublicationAPITypeGraphQLAPI: validateGraphQLAPIDefinition,
+	constants.PublicationAPITypeMCPProxy:   validateMCPProxyDefinition,
 }
 
 // validateDefinitionContent validates a definition before publish. An
@@ -106,4 +110,55 @@ func validateGraphQLAPIDefinition(contentType string, data []byte) error {
 		msg += fmt.Sprintf(" (line %d, column %d)", *first.Line, *first.Column)
 	}
 	return apperror.APIPublicationValidationFailed.New(msg)
+}
+
+// mcpCapabilityKinds are the lists an MCP definition groups its capabilities under.
+var mcpCapabilityKinds = []string{"tools", "resources", "prompts"}
+
+// validateMCPProxyDefinition rejects an MCP definition that is not a JSON or YAML
+// object listing at least one tool, resource or prompt, each a named object — the
+// grouped shape the proxy's own capabilities take. Other keys are left alone.
+func validateMCPProxyDefinition(contentType string, data []byte) error {
+	var definition map[string]any
+	var err error
+	switch contentType {
+	case "application/json":
+		err = json.Unmarshal(data, &definition)
+	case "application/yaml":
+		err = yaml.Unmarshal(data, &definition)
+	default:
+		return apperror.APIPublicationValidationFailed.New(
+			"An MCP proxy definition must be application/json or application/yaml")
+	}
+	if err != nil || definition == nil {
+		return apperror.APIPublicationValidationFailed.New(
+			"The definition must be an object with tools, resources and prompts lists")
+	}
+
+	capabilities := 0
+	for _, kind := range mcpCapabilityKinds {
+		raw, present := definition[kind]
+		if !present || raw == nil {
+			continue
+		}
+		items, ok := raw.([]any)
+		if !ok {
+			return apperror.APIPublicationValidationFailed.New(
+				fmt.Sprintf("The definition's %s must be a list", kind))
+		}
+		for i, item := range items {
+			entry, ok := item.(map[string]any)
+			name, _ := entry["name"].(string)
+			if !ok || strings.TrimSpace(name) == "" {
+				return apperror.APIPublicationValidationFailed.New(
+					fmt.Sprintf("Entry %d of the definition's %s must be an object with a name", i+1, kind))
+			}
+		}
+		capabilities += len(items)
+	}
+	if capabilities == 0 {
+		return apperror.APIPublicationValidationFailed.New(
+			"The definition must list at least one tool, resource or prompt")
+	}
+	return nil
 }
