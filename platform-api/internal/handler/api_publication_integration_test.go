@@ -97,6 +97,8 @@ func setupPublicationTestEnv(t *testing.T) (http.Handler, *database.DB, func()) 
 		`INSERT INTO projects (uuid, handle, display_name, organization_uuid) VALUES ('proj-1', 'proj', 'Project', 'org-1')`,
 		`INSERT INTO artifacts (uuid, type, organization_uuid) VALUES ('api-artifact-1', 'RestApi', 'org-1')`,
 		`INSERT INTO rest_apis (uuid, organization_uuid, handle, display_name, version, project_uuid, lifecycle_status, configuration) VALUES ('api-artifact-1', 'org-1', 'my-api', 'My API', 'v1', 'proj-1', 'CREATED', '{}')`,
+		`INSERT INTO artifacts (uuid, type, organization_uuid) VALUES ('mcp-artifact-1', 'Mcp', 'org-1')`,
+		`INSERT INTO mcp_proxies (uuid, organization_uuid, handle, display_name, version, project_uuid, configuration) VALUES ('mcp-artifact-1', 'org-1', 'my-mcp', 'My MCP', 'v1', 'proj-1', '{}')`,
 		`INSERT INTO api_portals (uuid, organization_uuid, handle, display_name, status, internal_auth_key, metadata) VALUES ('portal-1', 'org-1', 'my-portal', 'My Portal', 'active', 'dummy-key', '{}')`,
 		`INSERT INTO subscription_plans (uuid, handle, display_name, organization_uuid) VALUES ('plan-1', 'gold', 'Gold', 'org-1')`,
 		`INSERT INTO api_documents (uuid, artifact_uuid, organization_uuid, type, handle, display_name, content) VALUES ('doc-1', 'api-artifact-1', 'org-1', 'MARKDOWN', 'quickstart', 'Quickstart', 'content')`,
@@ -678,5 +680,82 @@ func TestPublicationHandler_ResolveAPIErrors(t *testing.T) {
 				t.Fatalf("want %d, got %d: %.200s", tc.want, w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+const mcpBase = "/api/v0.9/api-portals/my-portal/apis/mcp-proxy/my-mcp"
+
+// TestPublicationHandler_MCPProxyLifecycle drives an MCP proxy through draft, publish,
+// republish, deprecate and unpublish over the real HTTP stack — the three per-type routes
+// are mounted for mcp-proxy and the shared draft routes resolve it as an MCP proxy.
+func TestPublicationHandler_MCPProxyLifecycle(t *testing.T) {
+	r, _, cleanup := setupPublicationTestEnv(t)
+	defer cleanup()
+
+	w := doPublicationRequest(r, http.MethodPut, mcpBase+"/draft", "application/json",
+		[]byte(`{"displayName":"My MCP","version":"v1","endpoints":{"productionUrl":"https://gw.example.com/my-mcp/mcp"}}`))
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT draft: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// A definition with nothing to list is refused at publish, not at save.
+	w = doPublicationRequest(r, http.MethodPut, mcpBase+"/draft/definition", "application/json", []byte(`{"tools":[],"resources":[],"prompts":[]}`))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("PUT definition: want 204, got %d: %s", w.Code, w.Body.String())
+	}
+	w = doPublicationRequest(r, http.MethodPost, mcpBase+"/publish", "", nil)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "PUBLICATION_VALIDATION_FAILED") {
+		t.Fatalf("publish with an empty definition: want 400 PUBLICATION_VALIDATION_FAILED, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = doPublicationRequest(r, http.MethodPut, mcpBase+"/draft/definition", "application/json", []byte(`{"tools":[{"name":"echo"}]}`))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("PUT definition: want 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = doPublicationRequest(r, http.MethodPost, mcpBase+"/publish", "", nil)
+	if w.Code != http.StatusCreated || !strings.HasSuffix(w.Header().Get("Location"), "/apis/mcp-proxy/my-mcp/publication") {
+		t.Fatalf("first publish: want 201 with a publication Location, got %d %q: %s", w.Code, w.Header().Get("Location"), w.Body.String())
+	}
+	// The first publish promoted the draft, so a republish starts from a fresh one.
+	doPublicationRequest(r, http.MethodPut, mcpBase+"/draft", "application/json", []byte(`{"displayName":"My MCP","version":"v1"}`))
+	doPublicationRequest(r, http.MethodPut, mcpBase+"/draft/definition", "application/json", []byte(`{"tools":[{"name":"echo"}]}`))
+	w = doPublicationRequest(r, http.MethodPost, mcpBase+"/publish", "", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("republish: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = doPublicationRequest(r, http.MethodPost, mcpBase+"/deprecate", "", nil)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"status":"DEPRECATED"`) {
+		t.Fatalf("deprecate: want 200 DEPRECATED, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = doPublicationRequest(r, http.MethodPost, mcpBase+"/unpublish", "", nil)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("unpublish: want 204, got %d: %s", w.Code, w.Body.String())
+	}
+	w = doPublicationRequest(r, http.MethodPost, mcpBase+"/unpublish", "", nil)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("unpublish again: want 409, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestPublicationHandler_MCPProxyContentRoutes checks the landing page and thumbnail
+// draft routes work for an MCP proxy the same as for any other type.
+func TestPublicationHandler_MCPProxyContentRoutes(t *testing.T) {
+	r, _, cleanup := setupPublicationTestEnv(t)
+	defer cleanup()
+
+	w := doPublicationRequest(r, http.MethodPut, mcpBase+"/draft", "application/json", []byte(`{"displayName":"My MCP","version":"v1"}`))
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT draft: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	w = doPublicationRequest(r, http.MethodPut, mcpBase+"/draft/landing-page", "text/markdown", []byte("# My MCP"))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("PUT landing page: want 204, got %d: %s", w.Code, w.Body.String())
+	}
+	w = doPublicationRequest(r, http.MethodGet, mcpBase+"/draft/landing-page", "", nil)
+	if w.Code != http.StatusOK || w.Body.String() != "# My MCP" {
+		t.Fatalf("GET landing page: want the saved markdown, got %d: %s", w.Code, w.Body.String())
 	}
 }
