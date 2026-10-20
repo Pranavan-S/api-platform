@@ -583,7 +583,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
                 permissions={{
                   publish: hasPermission(SCOPES.MCP_PROXY_API_PORTAL_PUBLISH),
                   unpublish: hasPermission(SCOPES.MCP_PROXY_API_PORTAL_UNPUBLISH),
-                  deprecate: hasPermission(SCOPES.MCP_PROXY_API_PORTAL_MANAGE),
+                  deprecate: hasPermission(SCOPES.MCP_PROXY_API_PORTAL_DEPRECATE),
                 }}
                 publishing={pendingAction === 'publishing'}
                 savingDraft={pendingAction === 'saving'}

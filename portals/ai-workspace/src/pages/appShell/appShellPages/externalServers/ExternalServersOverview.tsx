@@ -264,7 +264,7 @@ export default function ExternalServersOverview(): JSX.Element {
   const canOpenPublishPage =
     hasPermission(SCOPES.MCP_PROXY_API_PORTAL_PUBLISH) ||
     hasPermission(SCOPES.MCP_PROXY_API_PORTAL_UNPUBLISH) ||
-    hasPermission(SCOPES.MCP_PROXY_API_PORTAL_MANAGE);
+    hasPermission(SCOPES.MCP_PROXY_API_PORTAL_DEPRECATE);
   const [server, setServer] = useState<MCPServer | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingChanges, setIsSavingChanges] = useState(false);
