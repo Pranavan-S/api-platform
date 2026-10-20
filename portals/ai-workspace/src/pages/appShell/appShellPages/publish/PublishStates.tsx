@@ -16,6 +16,7 @@
  * under the License.
  */
 
+import type { ReactNode } from 'react';
 import { defineMessages, useIntl } from 'react-intl';
 import { Alert, Box, Stack, Typography } from '@wso2/oxygen-ui';
 import AILoader from '../../../../Components/AILoader';
@@ -44,8 +45,16 @@ export function LoadingState({ label }: { label?: string }) {
   );
 }
 
-/** A compact dashed panel for a list with nothing to show. */
-export function EmptyState({ title, description }: { title: string; description?: string }) {
+/** A compact dashed panel for a list with nothing to show, with the action that fills it, if there is one. */
+export function EmptyState({
+  action,
+  description,
+  title,
+}: {
+  action?: ReactNode;
+  description?: string;
+  title: string;
+}) {
   return (
     <Box
       sx={{
@@ -62,6 +71,7 @@ export function EmptyState({ title, description }: { title: string; description?
           {description}
         </Typography>
       )}
+      {action && <Box sx={{ mt: 2 }}>{action}</Box>}
     </Box>
   );
 }

@@ -35,8 +35,20 @@ import { useMcpDeployedGateways } from '../../../../hooks/useMcpDeployedGateways
 /** `inDraft`: the draft already stores it, so saving need not send it. */
 export type ThumbnailSeed = { blob: Blob; inDraft: boolean };
 
-/** What the editor opens with: the details, definition and thumbnail, from the freshest tier that has each. */
-export type PublishSeed = { definitionText: string; thumbnail?: ThumbnailSeed; values: DraftFormValues };
+/** `inDraft`: the draft already stores it, so saving need not send it. */
+export type LandingPageSeed = { text: string; inDraft: boolean };
+
+/**
+ * What the editor opens with, from the freshest tier that has each part.
+ * `landingPageFailed`: a tier has a landing page but reading it failed.
+ */
+export type PublishSeed = {
+  definitionText: string;
+  landingPage?: LandingPageSeed;
+  landingPageFailed: boolean;
+  thumbnail?: ThumbnailSeed;
+  values: DraftFormValues;
+};
 
 type Definition = McpDefinition | undefined;
 
@@ -73,6 +85,8 @@ type Loaded = {
   publicationDefinition: Definition;
   draftThumbnail?: Blob;
   publicationThumbnail?: Blob;
+  draftLandingPage?: string;
+  publicationLandingPage?: string;
 };
 
 /**
@@ -86,10 +100,11 @@ type Loaded = {
  * the Production URL's choices and its default (the first); a failed read only
  * leaves the choices empty.
  *
- * The thumbnail comes from the draft if it has one, else from the live listing, by the
- * `hasThumbnail` flags rather than by whether a read worked: a failed read must not fall
- * through to the live one, or saving would overwrite the draft's own with it. The live
- * one is read whenever the listing has it, for the published view.
+ * The thumbnail and the landing page each come from the draft if it has one, else from the
+ * live listing, by the `hasThumbnail` / `hasLandingPage` flags rather than by whether a read
+ * worked: a failed read must not fall through to the live one, or saving would overwrite the
+ * draft's own with it. The live ones are read whenever the listing has them, for the
+ * published view.
  *
  * `isLoading` is latched: the page is loading until everything it opens on is
  * ready, and not again for the refetches that follow its own saves.
@@ -131,12 +146,18 @@ export function usePublishPageData(
                 mcpProxiesApis.getMcpProxyApiPortalPublicationDefinition(apiPortalId, serverId, PLATFORM_API_BASE_URL)
               )
             : undefined;
-        const [draftThumbnail, publicationThumbnail] = await Promise.all([
+        const [draftThumbnail, publicationThumbnail, draftLandingPage, publicationLandingPage] = await Promise.all([
           readAsset(draft?.hasThumbnail, () =>
             mcpProxiesApis.getMcpProxyApiPortalDraftThumbnail(apiPortalId, serverId, PLATFORM_API_BASE_URL)
           ),
           readAsset(publication?.hasThumbnail, () =>
             mcpProxiesApis.getMcpProxyApiPortalPublicationThumbnail(apiPortalId, serverId, PLATFORM_API_BASE_URL)
+          ),
+          readAsset(draft?.hasLandingPage, () =>
+            mcpProxiesApis.getMcpProxyApiPortalDraftLandingPage(apiPortalId, serverId, PLATFORM_API_BASE_URL)
+          ),
+          readAsset(publication?.hasLandingPage, () =>
+            mcpProxiesApis.getMcpProxyApiPortalPublicationLandingPage(apiPortalId, serverId, PLATFORM_API_BASE_URL)
           ),
         ]);
         if (cancelled) return;
@@ -150,6 +171,8 @@ export function usePublishPageData(
           publicationDefinition,
           draftThumbnail,
           publicationThumbnail,
+          draftLandingPage,
+          publicationLandingPage,
         });
       } catch (loadError) {
         logger.error('Failed to load the MCP publish page:', loadError);
@@ -200,8 +223,17 @@ export function usePublishPageData(
       : loaded.publication?.hasThumbnail
         ? loaded.publicationThumbnail
         : undefined;
+    const draftHasLandingPage = Boolean(loaded.draft?.hasLandingPage);
+    const publicationHasLandingPage = Boolean(loaded.publication?.hasLandingPage);
+    const landingPageText = draftHasLandingPage
+      ? loaded.draftLandingPage
+      : publicationHasLandingPage
+        ? loaded.publicationLandingPage
+        : undefined;
     return {
       definitionText: definitionToText(definition),
+      landingPage: landingPageText === undefined ? undefined : { text: landingPageText, inDraft: draftHasLandingPage },
+      landingPageFailed: (draftHasLandingPage || publicationHasLandingPage) && landingPageText === undefined,
       thumbnail: thumbnail && { blob: thumbnail, inDraft: Boolean(loaded.draft?.hasThumbnail) },
       values: resolveDraftFormValues(loaded.draft, loaded.publication, loaded.server, productionUrlOptions[0]?.url),
     };
@@ -218,6 +250,10 @@ export function usePublishPageData(
     isLoading: !isReady,
     productionUrlOptions,
     publishedDefinition,
+    publishedLandingPage: {
+      failed: Boolean(loaded?.publication?.hasLandingPage) && loaded?.publicationLandingPage === undefined,
+      text: loaded?.publicationLandingPage,
+    },
     publishedThumbnail: loaded?.publicationThumbnail,
     seed,
     refetch,

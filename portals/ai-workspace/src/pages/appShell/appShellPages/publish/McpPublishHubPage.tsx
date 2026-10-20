@@ -41,6 +41,7 @@ import { AppPage } from './AppPage';
 import { CapabilitiesTab, type CapabilitiesTabProps } from './CapabilitiesTab';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DocumentsTab } from './DocumentsTab';
+import { LandingPageTab } from './LandingPageTab';
 import {
   draftFormValuesToInput,
   emptyDraftFormValues,
@@ -53,6 +54,7 @@ import {
   type DraftFormField,
   type DraftFormValues,
 } from './mcpPublishForm';
+import { buildLandingPageStarter } from './landingPageStarter';
 import { PublicationVersionCard, type PublicationVersionTone } from './PublicationVersionCard';
 import { PublicationVersionToggle } from './PublicationVersionToggle';
 import { PublishActionsBar } from './PublishActionsBar';
@@ -204,7 +206,7 @@ const ACTION_BAR_HEIGHT = 40;
 /** The fields that show a validation message. */
 const FORM_FIELDS: DraftFormField[] = ['displayName', 'version', 'productionUrl', 'sandboxUrl'];
 
-type PublishTab = 'details' | 'capabilities' | 'documentations';
+type PublishTab = 'details' | 'capabilities' | 'documentations' | 'landingPage';
 
 /** Which action is currently in flight, so the right button (and only that one) shows busy. */
 type PendingAction = 'idle' | 'saving' | 'publishing' | 'unpublishing' | 'deprecating';
@@ -274,7 +276,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
   const [values, setValues] = useState<DraftFormValues>(emptyDraftFormValues);
   const [touched, setTouched] = useState<Partial<Record<DraftFormField, boolean>>>({});
   const [definitionText, setDefinitionText] = useState('');
-  // The parts of the listing saved on their own: the thumbnail.
+  // The parts of the listing saved on their own: the thumbnail and the landing page.
   const assets = usePublishAssets(apiPortalId, serverId);
   // What the server holds for the fields shown, so edits made since can be told apart.
   const [saved, setSaved] = useState({ definitionText: '', values: emptyDraftFormValues });
@@ -437,6 +439,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
       if (!(await saveDetails())) return;
       const definitionSaved = await saveDefinition();
       await assets.saveThumbnail();
+      await assets.saveLandingPage();
       showSnackbar(
         definitionSaved
           ? intl.formatMessage(messages.draftSaved)
@@ -468,6 +471,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
       // there rather than what the user is looking at.
       if (!(await saveDefinition())) return;
       await assets.saveThumbnail();
+      await assets.saveLandingPage();
       try {
         await mcpProxiesApis.publishSavedMcpProxyDraft(apiPortalId, serverId, PLATFORM_API_BASE_URL);
       } catch (error) {
@@ -540,6 +544,15 @@ export default function McpPublishHubPage(): React.JSX.Element {
           />
         );
       }
+      if (tab === 'landingPage') {
+        return (
+          <LandingPageTab
+            failed={data.publishedLandingPage.failed}
+            readOnly
+            text={data.publishedLandingPage.text}
+          />
+        );
+      }
       return tab === 'details' ? (
         <McpProxyDetailsTab readOnly thumbnailUrl={publishedThumbnailUrl} values={publishedValues} />
       ) : data.publishedDefinition.isLoading ? (
@@ -559,6 +572,18 @@ export default function McpPublishHubPage(): React.JSX.Element {
           mcpProxyId={serverId}
           onChange={handleChange}
           values={values}
+        />
+      );
+    }
+    if (tab === 'landingPage') {
+      return (
+        <LandingPageTab
+          disabled={pendingAction !== 'idle'}
+          failed={assets.landingPageFailed}
+          generated={assets.generatedLandingPage}
+          onChange={assets.setLandingPage}
+          onCreate={() => assets.createLandingPage(buildLandingPageStarter(values, definitionText))}
+          text={assets.landingPage}
         />
       );
     }
@@ -630,7 +655,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
               <Tab label={intl.formatMessage(messages.tabCapabilities)} value="capabilities" />
               <Tab disabled label={intl.formatMessage(messages.tabPlans)} value="subscriptionPlans" />
               <Tab label={intl.formatMessage(messages.tabDocs)} value="documentations" />
-              <Tab disabled label={intl.formatMessage(messages.tabLanding)} value="landingPage" />
+              <Tab label={intl.formatMessage(messages.tabLanding)} value="landingPage" />
             </Tabs>
             <PublicationVersionToggle
               disabled={pendingAction !== 'idle'}

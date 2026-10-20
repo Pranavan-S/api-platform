@@ -39,6 +39,7 @@ vi.mock('../../../../apis/MCP/mcpProxiesApis', () => ({
     unpublishMcpProxyFromApiPortal: vi.fn(),
     deprecateMcpProxyOnApiPortal: vi.fn(),
     saveMcpProxyApiPortalDraftThumbnail: vi.fn(),
+    saveMcpProxyApiPortalDraftLandingPage: vi.fn(),
   },
 }));
 vi.mock('./usePublishPageData', () => ({ usePublishPageData: () => mocks.data }));
@@ -95,7 +96,8 @@ const setData = (overrides: Record<string, unknown> = {}) => {
     isLoading: false,
     productionUrlOptions: [],
     publishedDefinition: { definition: undefined, failed: false, isLoading: false },
-    seed: { definitionText: DEFINITION, values: VALUES },
+    publishedLandingPage: { failed: false, text: undefined },
+    seed: { definitionText: DEFINITION, landingPageFailed: false, values: VALUES },
     refetch: mocks.refetch,
     ...overrides,
   };
@@ -334,6 +336,95 @@ describe('the thumbnail', () => {
     open();
     expect(screen.getByRole('img', { name: 'Travel MCP' })).toHaveAttribute('src', 'blob:thumbnail');
     expect(screen.queryByRole('button', { name: 'Change thumbnail' })).not.toBeInTheDocument();
+  });
+});
+
+describe('the Landing Page tab', () => {
+  const seedWith = (landingPage?: { text: string; inDraft: boolean }, landingPageFailed = false) =>
+    setData({ seed: { definitionText: DEFINITION, landingPage, landingPageFailed, values: VALUES } });
+  const editor = () => screen.getByRole('textbox', { name: 'Landing page (Markdown)' });
+
+  it('starts empty, and creates a page from the details and the capabilities on offer', async () => {
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Landing Page' }));
+    expect(screen.getByText('No landing page')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Create from MCP proxy details' }));
+    expect(editor()).toHaveValue('## Tools\n\n- **search** — Find trips\n');
+    expect(screen.getByText(/Publishing replaces the MCP Hub’s default section/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeEnabled();
+  });
+
+  it('opens on the stored page, which is not an edit', async () => {
+    seedWith({ text: '# Travel', inDraft: true });
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Landing Page' }));
+    expect(editor()).toHaveValue('# Travel');
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled();
+  });
+
+  it('saves an edited page with the draft, after the thumbnail', async () => {
+    seedWith({ text: '# Travel', inDraft: true });
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Landing Page' }));
+    fireEvent.change(editor(), { target: { value: '# Travel\n\nMore' } });
+    await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+
+    await waitFor(() => expect(mocks.showSnackbar).toHaveBeenCalledWith('Draft saved.', 'success'));
+    expect(api.saveMcpProxyApiPortalDraftLandingPage).toHaveBeenCalledWith(
+      'hub-1',
+      'travel',
+      '# Travel\n\nMore',
+      expect.any(String)
+    );
+    const [saveDefinition, saveLandingPage] = calls(
+      api.saveMcpProxyApiPortalDraftDefinition,
+      api.saveMcpProxyApiPortalDraftLandingPage
+    );
+    expect(saveDefinition).toBeLessThan(saveLandingPage);
+  });
+
+  it('does not send a page the draft already stores', async () => {
+    seedWith({ text: '# Travel', inDraft: true });
+    const { user } = open();
+    await user.type(screen.getByRole('textbox', { name: /^Version/ }), '2');
+    await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+
+    await waitFor(() => expect(mocks.showSnackbar).toHaveBeenCalledWith('Draft saved.', 'success'));
+    expect(api.saveMcpProxyApiPortalDraftLandingPage).not.toHaveBeenCalled();
+  });
+
+  it('publishes the page the draft holds, and stops when it cannot be saved', async () => {
+    api.saveMcpProxyApiPortalDraftLandingPage.mockRejectedValue(httpError());
+    seedWith({ text: '# Live', inDraft: false });
+    const { user } = open();
+    await user.click(mainButton());
+
+    await waitFor(() => expect(mocks.showSnackbar).toHaveBeenCalledWith('Server said no.', 'error'));
+    expect(api.publishSavedMcpProxyDraft).not.toHaveBeenCalled();
+  });
+
+  it('offers no editor when the stored page could not be read', async () => {
+    seedWith(undefined, true);
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Landing Page' }));
+    expect(screen.getByText('Unable to load the landing page.')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Landing page (Markdown)' })).not.toBeInTheDocument();
+  });
+
+  it('shows the live page read only', async () => {
+    setData({ publication: LIVE, publishedLandingPage: { failed: false, text: '# Live page' } });
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Landing Page' }));
+    expect(screen.getByRole('region', { name: 'Published page' })).toHaveTextContent('Live page');
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+  });
+
+  it('says so when the live page cannot be read', async () => {
+    setData({ publication: LIVE, publishedLandingPage: { failed: true, text: undefined } });
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Landing Page' }));
+    expect(screen.getByText('Unable to load the landing page.')).toBeInTheDocument();
   });
 });
 

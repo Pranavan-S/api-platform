@@ -32,6 +32,8 @@ vi.mock('../../../../apis/MCP/mcpProxiesApis', () => ({
     getMcpProxyApiPortalPublicationDefinition: vi.fn(),
     getMcpProxyApiPortalDraftThumbnail: vi.fn(),
     getMcpProxyApiPortalPublicationThumbnail: vi.fn(),
+    getMcpProxyApiPortalDraftLandingPage: vi.fn(),
+    getMcpProxyApiPortalPublicationLandingPage: vi.fn(),
   },
 }));
 const gateways = vi.hoisted(() => ({ value: { gateways: [] as unknown[], isLoading: false } }));
@@ -66,6 +68,8 @@ beforeEach(() => {
   api.getMcpProxyApiPortalPublicationDefinition.mockReset().mockRejectedValue(notFound());
   api.getMcpProxyApiPortalDraftThumbnail.mockReset().mockRejectedValue(notFound());
   api.getMcpProxyApiPortalPublicationThumbnail.mockReset().mockRejectedValue(notFound());
+  api.getMcpProxyApiPortalDraftLandingPage.mockReset().mockRejectedValue(notFound());
+  api.getMcpProxyApiPortalPublicationLandingPage.mockReset().mockRejectedValue(notFound());
   vi.mocked(getApiPortal).mockReset().mockResolvedValue({ name: 'Main Hub' } as never);
 });
 
@@ -214,6 +218,66 @@ describe('usePublishPageData', () => {
       await waitFor(() => expect(result.current.isLoading).toBe(false));
       expect(result.current.error).toBeUndefined();
       expect(result.current.seed?.thumbnail).toBeUndefined();
+    });
+  });
+
+  describe('the landing page', () => {
+    it('is not read when no listing has one', async () => {
+      api.getMcpProxyApiPortalDraft.mockResolvedValue(DRAFT as never);
+      const { result } = load();
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(api.getMcpProxyApiPortalDraftLandingPage).not.toHaveBeenCalled();
+      expect(result.current.seed?.landingPage).toBeUndefined();
+      expect(result.current.seed?.landingPageFailed).toBe(false);
+      expect(result.current.publishedLandingPage).toEqual({ failed: false, text: undefined });
+    });
+
+    it('opens on the draft\'s own, which saving need not send again', async () => {
+      api.getMcpProxyApiPortalDraft.mockResolvedValue({ ...DRAFT, hasLandingPage: true } as never);
+      api.getMcpProxyApiPortalPublication.mockResolvedValue({ ...PUBLICATION, hasLandingPage: true } as never);
+      api.getMcpProxyApiPortalDraftLandingPage.mockResolvedValue('# Draft');
+      api.getMcpProxyApiPortalPublicationLandingPage.mockResolvedValue('# Live');
+      const { result } = load();
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.seed?.landingPage).toEqual({ text: '# Draft', inDraft: true });
+      expect(result.current.publishedLandingPage).toEqual({ failed: false, text: '# Live' });
+    });
+
+    it('falls back to the live listing\'s, which the draft would still have to store', async () => {
+      api.getMcpProxyApiPortalPublication.mockResolvedValue({ ...PUBLICATION, hasLandingPage: true } as never);
+      api.getMcpProxyApiPortalPublicationLandingPage.mockResolvedValue('# Live');
+      const { result } = load();
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.seed?.landingPage).toEqual({ text: '# Live', inDraft: false });
+    });
+
+    it('keeps a blank page, which is a page', async () => {
+      api.getMcpProxyApiPortalDraft.mockResolvedValue({ ...DRAFT, hasLandingPage: true } as never);
+      api.getMcpProxyApiPortalDraftLandingPage.mockResolvedValue('');
+      const { result } = load();
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.seed?.landingPage).toEqual({ text: '', inDraft: true });
+      expect(result.current.seed?.landingPageFailed).toBe(false);
+    });
+
+    it('flags a page that cannot be read instead of falling through to the live one', async () => {
+      api.getMcpProxyApiPortalDraft.mockResolvedValue({ ...DRAFT, hasLandingPage: true } as never);
+      api.getMcpProxyApiPortalPublication.mockResolvedValue({ ...PUBLICATION, hasLandingPage: true } as never);
+      api.getMcpProxyApiPortalDraftLandingPage.mockRejectedValue(serverError());
+      api.getMcpProxyApiPortalPublicationLandingPage.mockResolvedValue('# Live');
+      const { result } = load();
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.error).toBeUndefined();
+      expect(result.current.seed?.landingPage).toBeUndefined();
+      expect(result.current.seed?.landingPageFailed).toBe(true);
+    });
+
+    it('flags a live page that cannot be read', async () => {
+      api.getMcpProxyApiPortalPublication.mockResolvedValue({ ...PUBLICATION, hasLandingPage: true } as never);
+      api.getMcpProxyApiPortalPublicationLandingPage.mockRejectedValue(serverError());
+      const { result } = load();
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.publishedLandingPage).toEqual({ failed: true, text: undefined });
     });
   });
 

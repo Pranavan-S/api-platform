@@ -39,6 +39,11 @@ describe('EmptyState', () => {
     renderWithProviders(<EmptyState title="Only a title" />);
     expect(screen.getByText('Only a title')).toBeInTheDocument();
   });
+
+  it('offers the action that fills it', () => {
+    renderWithProviders(<EmptyState action={<button type="button">Add one</button>} title="Nothing here" />);
+    expect(screen.getByRole('button', { name: 'Add one' })).toBeInTheDocument();
+  });
 });
 
 describe('ErrorState', () => {

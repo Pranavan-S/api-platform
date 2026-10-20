@@ -19,10 +19,10 @@
 import { useCallback, useState } from 'react';
 import { mcpProxiesApis } from '../../../../apis/MCP/mcpProxiesApis';
 import { PLATFORM_API_BASE_URL } from '../../../../paths';
-import type { ThumbnailSeed } from './usePublishPageData';
+import type { LandingPageSeed, ThumbnailSeed } from './usePublishPageData';
 
 /** What the page opened with, from the freshest tier that has each part. */
-type AssetsSeed = { thumbnail?: ThumbnailSeed };
+type AssetsSeed = { landingPage?: LandingPageSeed; landingPageFailed?: boolean; thumbnail?: ThumbnailSeed };
 
 /**
  * The parts of a listing that are saved on their own, apart from its details and
@@ -38,11 +38,25 @@ export function usePublishAssets(apiPortalId: string, mcpProxyId: string) {
   const [storedThumbnail, setStoredThumbnail] = useState<Blob>();
   const [savedThumbnail, setSavedThumbnail] = useState<Blob>();
 
+  // The landing page's Markdown, and the draft's own and the saved one, as for the thumbnail;
+  // `undefined` until one exists.
+  const [landingPage, setLandingPage] = useState<string>();
+  const [storedLandingPage, setStoredLandingPage] = useState<string>();
+  const [savedLandingPage, setSavedLandingPage] = useState<string>();
+  // The generated starter, to tell it apart from a page edited since.
+  const [generatedLandingPage, setGeneratedLandingPage] = useState<string>();
+  // Set once when the page opens, so a later refetch can't turn a loaded page into an error.
+  const [landingPageFailed, setLandingPageFailed] = useState(false);
+
   /** Takes what the page opened with. */
   const seed = useCallback((opened: AssetsSeed) => {
     setThumbnail(opened.thumbnail?.blob);
     setStoredThumbnail(opened.thumbnail?.inDraft ? opened.thumbnail.blob : undefined);
     setSavedThumbnail(opened.thumbnail?.blob);
+    setLandingPage(opened.landingPage?.text);
+    setStoredLandingPage(opened.landingPage?.inDraft ? opened.landingPage.text : undefined);
+    setSavedLandingPage(opened.landingPage?.text);
+    setLandingPageFailed(Boolean(opened.landingPageFailed));
   }, []);
 
   /**
@@ -61,10 +75,30 @@ export function usePublishAssets(apiPortalId: string, mcpProxyId: string) {
     setSavedThumbnail(thumbnail);
   };
 
+  /** Saves the landing page alone, unless the draft already stores the one shown. */
+  const saveLandingPage = async () => {
+    if (landingPage === undefined || landingPage === storedLandingPage) return;
+    await mcpProxiesApis.saveMcpProxyApiPortalDraftLandingPage(apiPortalId, mcpProxyId, landingPage, PLATFORM_API_BASE_URL);
+    setStoredLandingPage(landingPage);
+    setSavedLandingPage(landingPage);
+  };
+
+  /** Starts the landing page from `starter`, which the tab then says it generated. */
+  const createLandingPage = (starter: string) => {
+    setLandingPage(starter);
+    setGeneratedLandingPage(starter);
+  };
+
   return {
-    hasUnsavedChanges: thumbnail !== savedThumbnail,
+    createLandingPage,
+    generatedLandingPage: generatedLandingPage !== undefined && landingPage === generatedLandingPage,
+    hasUnsavedChanges: thumbnail !== savedThumbnail || landingPage !== savedLandingPage,
+    landingPage,
+    landingPageFailed,
+    saveLandingPage,
     saveThumbnail,
     seed,
+    setLandingPage,
     setThumbnail,
     thumbnail,
   };
