@@ -626,7 +626,7 @@ const defaultOIDCScopes = "openid profile email offline_access" +
 	" ap:api_portal:read ap:api_portal:create ap:api_portal:update ap:api_portal:delete ap:api_portal:manage" +
 	" ap:api_portal:draft:read ap:api_portal:draft:update ap:api_portal:draft:manage" +
 	" ap:api_portal:publication:read" +
-	" ap:api_portal:mcp_proxy:publish ap:api_portal:mcp_proxy:unpublish ap:api_portal:mcp_proxy:manage" +
+	" ap:api_portal:mcp_proxy:publish ap:api_portal:mcp_proxy:unpublish ap:api_portal:mcp_proxy:deprecate ap:api_portal:mcp_proxy:manage" +
 	" ap:api_publication:read" +
 	" ap:secret:read ap:secret:create ap:secret:update ap:secret:delete ap:secret:manage"
 
