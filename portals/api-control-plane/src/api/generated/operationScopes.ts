@@ -59,6 +59,10 @@ export type ApScope =
   | 'ap:api_portal:graphql_api:publish'
   | 'ap:api_portal:graphql_api:unpublish'
   | 'ap:api_portal:manage'
+  | 'ap:api_portal:mcp_proxy:deprecate'
+  | 'ap:api_portal:mcp_proxy:manage'
+  | 'ap:api_portal:mcp_proxy:publish'
+  | 'ap:api_portal:mcp_proxy:unpublish'
   | 'ap:api_portal:publication:read'
   | 'ap:api_portal:read'
   | 'ap:api_portal:rest_api:deprecate'
@@ -262,6 +266,10 @@ export const AP_SCOPES: readonly ApScope[] = [
   'ap:api_portal:graphql_api:publish',
   'ap:api_portal:graphql_api:unpublish',
   'ap:api_portal:manage',
+  'ap:api_portal:mcp_proxy:deprecate',
+  'ap:api_portal:mcp_proxy:manage',
+  'ap:api_portal:mcp_proxy:publish',
+  'ap:api_portal:mcp_proxy:unpublish',
   'ap:api_portal:publication:read',
   'ap:api_portal:read',
   'ap:api_portal:rest_api:deprecate',
@@ -653,6 +661,10 @@ export const OPERATION_SCOPES = {
     'ap:api_portal:graphql_api:deprecate',
     'ap:api_portal:graphql_api:manage',
   ],
+  deprecateMcpProxyOnApiPortal: [
+    'ap:api_portal:mcp_proxy:deprecate',
+    'ap:api_portal:mcp_proxy:manage',
+  ],
   deprecateRestApiOnApiPortal: [
     'ap:api_portal:rest_api:deprecate',
     'ap:api_portal:rest_api:manage',
@@ -873,6 +885,7 @@ export const OPERATION_SCOPES = {
     'ap:api_portal:graphql_api:manage',
     'ap:api_portal:graphql_api:publish',
   ],
+  publishMcpProxyToApiPortal: ['ap:api_portal:mcp_proxy:manage', 'ap:api_portal:mcp_proxy:publish'],
   publishRestApiToApiPortal: ['ap:api_portal:rest_api:manage', 'ap:api_portal:rest_api:publish'],
   RegisterOrganization: ['ap:organization:create', 'ap:organization:manage'],
   RemoveApplicationAPIKey: [
@@ -976,6 +989,10 @@ export const OPERATION_SCOPES = {
   unpublishGraphQLApiFromApiPortal: [
     'ap:api_portal:graphql_api:manage',
     'ap:api_portal:graphql_api:unpublish',
+  ],
+  unpublishMcpProxyFromApiPortal: [
+    'ap:api_portal:mcp_proxy:manage',
+    'ap:api_portal:mcp_proxy:unpublish',
   ],
   unpublishRestApiFromApiPortal: [
     'ap:api_portal:rest_api:manage',
