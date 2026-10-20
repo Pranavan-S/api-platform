@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   showSnackbar: vi.fn(),
   refetch: vi.fn(),
   allowed: true,
+  documents: { documents: undefined, failed: false } as { documents?: unknown[]; failed: boolean },
 }));
 
 vi.mock('../../../../apis/MCP/mcpProxiesApis', () => ({
@@ -40,6 +41,7 @@ vi.mock('../../../../apis/MCP/mcpProxiesApis', () => ({
   },
 }));
 vi.mock('./usePublishPageData', () => ({ usePublishPageData: () => mocks.data }));
+vi.mock('../../../../hooks/useMcpProxyDocuments', () => ({ useMcpProxyDocuments: () => mocks.documents }));
 vi.mock('../../../../hooks/usePublishProject', () => ({
   usePublishProject: () => ({
     organizationId: 'org-1',
@@ -73,7 +75,12 @@ const VALUES = {
   productionUrl: '',
   sandboxUrl: '',
   agentVisibility: 'VISIBLE',
+  docIds: [] as string[],
 };
+const DOCUMENTS = [
+  { id: 'quickstart', type: 'HowTo', displayName: 'Quickstart' },
+  { id: 'faq', type: 'Other', displayName: 'FAQ' },
+];
 const LIVE = { displayName: 'Travel MCP', version: 'v1', status: 'PUBLISHED', updatedAt: new Date().toISOString() };
 
 /** What the data hook returns, for a proxy that has never been published unless said otherwise. */
@@ -117,6 +124,7 @@ beforeEach(() => {
   mocks.navigate.mockReset();
   mocks.showSnackbar.mockReset();
   mocks.refetch.mockReset();
+  mocks.documents = { documents: undefined, failed: false };
   Object.values(api).forEach((fn) => fn.mockReset().mockResolvedValue(undefined as never));
   setData();
 });
@@ -158,6 +166,79 @@ describe('what the page shows', () => {
     await user.click(screen.getByText('Tools'));
     expect(screen.getByRole('checkbox', { name: 'search' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'book' })).not.toBeChecked();
+  });
+});
+
+describe('the Documentation tab', () => {
+  beforeEach(() => {
+    mocks.documents = { documents: DOCUMENTS, failed: false };
+  });
+
+  it('lists the proxy\'s documents with the saved selection ticked', async () => {
+    setData({ seed: { definitionText: DEFINITION, values: { ...VALUES, docIds: ['faq'] } } });
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Documentation' }));
+    expect(screen.getByRole('checkbox', { name: 'Quickstart' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'FAQ' })).toBeChecked();
+  });
+
+  it('counts a changed selection as an edit, and saves it with the draft', async () => {
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Documentation' }));
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled();
+    await user.click(screen.getByRole('checkbox', { name: 'Quickstart' }));
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+
+    await waitFor(() =>
+      expect(api.saveMcpProxyApiPortalDraft).toHaveBeenCalledWith(
+        'hub-1',
+        'travel',
+        expect.objectContaining({ docIds: ['quickstart'] }),
+        expect.any(String)
+      )
+    );
+  });
+
+  it('does not count a selection put back in another order as an edit', async () => {
+    setData({ seed: { definitionText: DEFINITION, values: { ...VALUES, docIds: ['quickstart', 'faq'] } } });
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Documentation' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Quickstart' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Quickstart' }));
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled();
+  });
+
+  it('drops a selected document that no longer exists, and says so', async () => {
+    setData({ seed: { definitionText: DEFINITION, values: { ...VALUES, docIds: ['faq', 'deleted'] } } });
+    open();
+    await waitFor(() =>
+      expect(mocks.showSnackbar).toHaveBeenCalledWith(
+        'A selected document no longer exists and was removed from the selection.',
+        'warning'
+      )
+    );
+    // The server dropped it from the saved draft too, so there is nothing to save.
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled();
+  });
+
+  it('stays on the tab when the server rejects the publish, rather than jumping to the capabilities', async () => {
+    api.publishSavedMcpProxyDraft.mockRejectedValue(httpError('PUBLICATION_VALIDATION_FAILED', 422));
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Documentation' }));
+    await user.click(mainButton());
+
+    await waitFor(() => expect(mocks.showSnackbar).toHaveBeenCalledWith('Server said no.', 'error'));
+    expect(screen.getByRole('tab', { name: 'Documentation' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('lists only what the live version holds, without checkboxes', async () => {
+    setData({ publication: { ...LIVE, docIds: ['faq'] } });
+    const { user } = open();
+    await user.click(screen.getByRole('tab', { name: 'Documentation' }));
+    expect(screen.getByText('FAQ')).toBeInTheDocument();
+    expect(screen.queryByText('Quickstart')).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   });
 });
 

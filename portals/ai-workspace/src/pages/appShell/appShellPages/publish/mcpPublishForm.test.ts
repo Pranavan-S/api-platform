@@ -27,6 +27,7 @@ import {
   parseDefinitionText,
   publishFormMessages,
   resolveDraftFormValues,
+  sameSelection,
   validateDraftFormValues,
   type DraftFormValues,
 } from './mcpPublishForm';
@@ -41,6 +42,7 @@ const baseValues: DraftFormValues = {
   productionUrl: '',
   sandboxUrl: '',
   agentVisibility: 'VISIBLE',
+  docIds: [],
 };
 
 describe('buildProductionUrlOptions', () => {
@@ -64,6 +66,7 @@ describe('resolveDraftFormValues', () => {
       productionUrl: 'https://gw/mcp',
       sandboxUrl: '',
       agentVisibility: 'VISIBLE',
+      docIds: [],
     });
   });
 
@@ -80,6 +83,13 @@ describe('resolveDraftFormValues', () => {
       productionUrl: 'https://draft/mcp',
     });
     expect(resolveDraftFormValues(undefined, { displayName: 'Live', version: '1' }, server).displayName).toBe('Live');
+  });
+
+  it('reads the selected documents from the draft, then the live listing', () => {
+    expect(resolveDraftFormValues({ docIds: ['guide'] } as PublicationDraftDetails, undefined, server).docIds).toEqual([
+      'guide',
+    ]);
+    expect(resolveDraftFormValues(undefined, { docIds: ['faq'] }, server).docIds).toEqual(['faq']);
   });
 });
 
@@ -113,6 +123,11 @@ describe('draftFormValuesToInput', () => {
     expect(input.endpoints).toEqual({ productionUrl: 'https://gw/mcp', sandboxUrl: undefined });
   });
 
+  it('sends the selected documents, even when none', () => {
+    expect(draftFormValuesToInput(baseValues).docIds).toEqual([]);
+    expect(draftFormValuesToInput({ ...baseValues, docIds: ['guide'] }).docIds).toEqual(['guide']);
+  });
+
   it('carries over what the form does not show and drops audit fields', () => {
     const stored: PublicationDraftDetails = {
       displayName: 'x',
@@ -121,7 +136,6 @@ describe('draftFormValuesToInput', () => {
       labels: ['default'],
       owners: { businessOwner: 'Pat' },
       subscriptionPlanIds: ['gold'],
-      docIds: ['guide'],
       createdBy: 'someone',
       hasThumbnail: true,
     };
@@ -131,10 +145,18 @@ describe('draftFormValuesToInput', () => {
       labels: ['default'],
       owners: { businessOwner: 'Pat' },
       subscriptionPlanIds: ['gold'],
-      docIds: ['guide'],
     });
     expect(input).not.toHaveProperty('createdBy');
     expect(input).not.toHaveProperty('hasThumbnail');
+  });
+});
+
+describe('sameSelection', () => {
+  it('compares selections as sets', () => {
+    expect(sameSelection(['a', 'b'], ['b', 'a'])).toBe(true);
+    expect(sameSelection([], [])).toBe(true);
+    expect(sameSelection(['a'], ['a', 'b'])).toBe(false);
+    expect(sameSelection(['a', 'b'], ['a', 'c'])).toBe(false);
   });
 });
 

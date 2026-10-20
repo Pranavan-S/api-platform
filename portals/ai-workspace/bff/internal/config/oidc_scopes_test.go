@@ -116,7 +116,9 @@ var excludedScopeResources = []string{
 	// GraphQL API publishing is the same per-type flow as REST's, surfaced only in
 	// the API control plane console — the AI Workspace has no GraphQL publish page.
 	"ap:api_portal:graphql_api:",
-	"ap:docs:",
+	// Documents are only read here, to pick the ones a listing publishes; writing them is
+	// not surfaced, so ap:docs:manage is the one scope of the family left out.
+	"ap:docs:manage",
 	"ap:thumbnail:",
 }
 

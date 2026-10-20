@@ -31,6 +31,7 @@ import useAIWorkspaceSnackbar from '../../../../hooks/aiWorkspaceSnackbar';
 import { useFillScrollArea } from '../../../../hooks/useFillScrollArea';
 import { useFrozenWhile } from '../../../../hooks/useFrozenWhile';
 import { usePublishProject } from '../../../../hooks/usePublishProject';
+import { useMcpProxyDocuments } from '../../../../hooks/useMcpProxyDocuments';
 import { PLATFORM_API_BASE_URL } from '../../../../paths';
 import { getErrorCode, getErrorMessage } from '../../../../utils/apiError';
 
@@ -38,11 +39,13 @@ import { McpProxyDetailsTab } from './McpProxyDetailsTab';
 import { AppPage } from './AppPage';
 import { CapabilitiesTab, type CapabilitiesTabProps } from './CapabilitiesTab';
 import { ConfirmDialog } from './ConfirmDialog';
+import { DocumentsTab } from './DocumentsTab';
 import {
   draftFormValuesToInput,
   emptyDraftFormValues,
   parseDefinitionText,
   resolveDraftFormValues,
+  sameSelection,
   validateDraftFormValues,
   definitionToText,
   type DraftFormField,
@@ -102,6 +105,10 @@ const messages = defineMessages({
   deprecated: {
     id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.deprecated',
     defaultMessage: 'Deprecated on {portal}.',
+  },
+  removedDocuments: {
+    id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.removedDocuments',
+    defaultMessage: 'A selected document no longer exists and was removed from the selection.',
   },
   edited: {
     id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.edited',
@@ -194,7 +201,7 @@ const ACTION_BAR_HEIGHT = 40;
 /** The fields that show a validation message. */
 const FORM_FIELDS: DraftFormField[] = ['displayName', 'version', 'productionUrl', 'sandboxUrl'];
 
-type PublishTab = 'details' | 'capabilities';
+type PublishTab = 'details' | 'capabilities' | 'documentations';
 
 /** Which action is currently in flight, so the right button (and only that one) shows busy. */
 type PendingAction = 'idle' | 'saving' | 'publishing' | 'unpublishing' | 'deprecating';
@@ -273,6 +280,8 @@ export default function McpPublishHubPage(): React.JSX.Element {
   const [confirmingUnpublish, setConfirmingUnpublish] = useState(false);
   const [confirmingDeprecate, setConfirmingDeprecate] = useState(false);
   const [initialized, setInitialized] = useState(false);
+  // Read once the Documentation tab is open or a selection is held to check it against.
+  const documents = useMcpProxyDocuments(serverId, tab === 'documentations' || values.docIds.length > 0);
 
   // Seeds the editor once, when everything has settled (success or the expected
   // 404), so a later refetch can't overwrite edits in progress.
@@ -283,6 +292,20 @@ export default function McpPublishHubPage(): React.JSX.Element {
     setSaved({ definitionText: data.seed.definitionText, values: data.seed.values });
     setInitialized(true);
   }, [initialized, data.seed]);
+
+  // A document deleted elsewhere has no checkbox to clear but would still be submitted, so drop it
+  // and say so.
+  useEffect(() => {
+    if (!initialized || !documents.documents) return;
+    const known = new Set(documents.documents.map((doc) => doc.id));
+    const isKnown = (id: string) => known.has(id);
+    if (values.docIds.every(isKnown)) return;
+    const withoutUnknown = (current: DraftFormValues) => ({ ...current, docIds: current.docIds.filter(isKnown) });
+    setValues(withoutUnknown);
+    // The server dropped it from the saved draft too, so this isn't an edit to save.
+    setSaved((current) => ({ ...current, values: withoutUnknown(current.values) }));
+    showSnackbar(intl.formatMessage(messages.removedDocuments), 'warning');
+  }, [initialized, documents.documents, values.docIds, intl, showSnackbar]);
 
   /** What to tell the user about a failed call; a vanished draft gets a clearer message than the server's. */
   const describeFailure = (error: unknown, fallback: string): string =>
@@ -319,7 +342,13 @@ export default function McpPublishHubPage(): React.JSX.Element {
   const showingPublished = view === 'published';
   const hasUnsavedChanges =
     definitionText !== saved.definitionText ||
-    (Object.keys(values) as (keyof DraftFormValues)[]).some((field) => values[field] !== saved.values[field]);
+    (Object.keys(values) as (keyof DraftFormValues)[]).some((field) => {
+      const current = values[field];
+      const savedValue = saved.values[field];
+      return Array.isArray(current) && Array.isArray(savedValue)
+        ? !sameSelection(current, savedValue)
+        : current !== savedValue;
+    });
   const errors = validateDraftFormValues(values);
   const errorFor = (field: DraftFormField) => {
     const error = touched[field] ? errors[field] : undefined;
@@ -421,7 +450,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
         await mcpProxiesApis.publishSavedMcpProxyDraft(apiPortalId, serverId, PLATFORM_API_BASE_URL);
       } catch (error) {
         // Sends the user to where they'd fix it; the message itself is reported by runAction.
-        if (getErrorCode(error) === 'PUBLICATION_VALIDATION_FAILED') setTab('capabilities');
+        if (getErrorCode(error) === 'PUBLICATION_VALIDATION_FAILED' && tab !== 'documentations') setTab('capabilities');
         throw error;
       }
       showSnackbar(intl.formatMessage(messages.published, { portal: portalName }), 'success');
@@ -478,6 +507,17 @@ export default function McpPublishHubPage(): React.JSX.Element {
 
   const renderContent = () => {
     if (showingPublished) {
+      if (tab === 'documentations') {
+        return (
+          <DocumentsTab
+            documents={documents.documents}
+            failed={documents.failed}
+            mcpProxyId={serverId}
+            readOnly
+            values={publishedValues}
+          />
+        );
+      }
       return tab === 'details' ? (
         <McpProxyDetailsTab readOnly values={publishedValues} />
       ) : data.publishedDefinition.isLoading ? (
@@ -486,6 +526,18 @@ export default function McpPublishHubPage(): React.JSX.Element {
         <ErrorState message={intl.formatMessage(messages.publishedSpecFailed)} />
       ) : (
         <CapabilitiesTab readOnly text={definitionToText(data.publishedDefinition.definition)} />
+      );
+    }
+    if (tab === 'documentations') {
+      return (
+        <DocumentsTab
+          disabled={pendingAction !== 'idle'}
+          documents={documents.documents}
+          failed={documents.failed}
+          mcpProxyId={serverId}
+          onChange={handleChange}
+          values={values}
+        />
       );
     }
     return tab === 'details' ? (
@@ -553,7 +605,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
               <Tab label={intl.formatMessage(messages.tabDetails)} value="details" />
               <Tab label={intl.formatMessage(messages.tabCapabilities)} value="capabilities" />
               <Tab disabled label={intl.formatMessage(messages.tabPlans)} value="subscriptionPlans" />
-              <Tab disabled label={intl.formatMessage(messages.tabDocs)} value="documentations" />
+              <Tab label={intl.formatMessage(messages.tabDocs)} value="documentations" />
               <Tab disabled label={intl.formatMessage(messages.tabLanding)} value="landingPage" />
             </Tabs>
             <PublicationVersionToggle
