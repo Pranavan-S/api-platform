@@ -57,12 +57,14 @@ import {
   ChevronLeft,
   Clock,
   Copy,
+  Check,
   Edit,
-  ExternalLink,
   Eye,
   EyeOff,
   Info,
+  Megaphone,
   Plus,
+  Rocket,
   Trash2,
 } from '@wso2/oxygen-ui-icons-react';
 import { FormattedMessage } from 'react-intl';
@@ -73,7 +75,7 @@ import {
   getProjectSlug,
 } from '../../../../utils/projectRouting';
 import { PLATFORM_API_BASE_URL } from '../../../../paths';
-import { API_PORTAL_ENABLED, DEFAULT_API_PORTAL_ID } from '../../../../config.env';
+import { API_PORTAL_ENABLED } from '../../../../config.env';
 import { mcpProxiesApis } from '../../../../apis/MCP/mcpProxiesApis';
 import * as mcpServerValidationApis from '../../../../apis/MCP/mcpServerValidationApis';
 import {
@@ -84,29 +86,28 @@ import {
   extractSecretHandle,
 } from '../../../../apis/secretApis';
 import { getGuardrails } from '../../../../apis/policyHubApis';
-import { resolveApiPortalUrl } from '../../../../apis/apiPortalApis';
 import { getMCPServerDeployments } from '../../../../apis/MCP/mcpServerDeployApis';
-import { getGateways } from '../../../../apis/gatewayApis';
-import type { Gateway } from '../../../../apis/gatewayTypes';
 import useAIWorkspaceSnackbar from '../../../../hooks/aiWorkspaceSnackbar';
 import { logger } from '../../../../utils/logger';
-import { getErrorMessage, getHttpStatus } from '../../../../utils/apiError';
+import { getErrorMessage } from '../../../../utils/apiError';
 import { parseMCPServerCapabilities } from '../../../../utils/mcpCapabilities';
 import type {
-  DeploymentResponse,
   MCPServer,
   MCPServerCapabilities,
   MCPServerInfoFetchRequest,
   MCPServerInfoFetchResponse,
-  PublicationDraftDetails,
-  PublicationDraftDetailsInput,
 } from '../../../../utils/types';
 import type { ParameterValues } from '../../PolicyParameterEditor/types';
 import PolicyMapper from './PolicyMapper';
 import type { SelectedPolicy } from './PolicyMapper';
 import ExternalServersValidationDetails from './ExternalServersValidationDetails';
 import CapabilitiesDrawer from './CapabilitiesDrawer';
+import OverviewLifecycleStage from './OverviewLifecycleStage';
 import type { EndpointValidationResponse } from './externalServersValidationTypes';
+import { isListedOnPortal } from '../publish/publicationDisplay';
+import { usePublishProject } from '../../../../hooks/usePublishProject';
+import { useMcpDeployedGateways } from '../../../../hooks/useMcpDeployedGateways';
+import { buildMcpInvokeUrl } from '../../../../utils/mcpInvokeUrl';
 import ExternalServerStepBanner from '../quickStart/ExternalServerStepBanner';
 import type { ExternalServerStepBannerStepId } from '../quickStart/ExternalServerStepBanner';
 import {
@@ -253,19 +254,23 @@ export default function ExternalServersOverview(): JSX.Element {
   );
 
   const navigate = useNavigate();
+  const { publishPath } = usePublishProject();
+  const publishUrl = publishPath(`/${encodeURIComponent(serverId ?? '')}`);
   const showSnackbar = useAIWorkspaceSnackbar();
   const { hasPermission } = useAppAuth();
   const canDeleteMcpProxy = hasPermission(SCOPES.MCP_PROXY_DELETE);
   const canDeployMcpProxy = hasPermission(SCOPES.MCP_PROXY_DEPLOYMENT_CREATE);
   const canViewDeployments = hasPermission(SCOPES.MCP_PROXY_DEPLOYMENT_READ);
-  const canPublishToAPIPortal = hasPermission(SCOPES.MCP_PROXY_API_PORTAL_PUBLISH);
-  const canUnpublishFromAPIPortal = hasPermission(SCOPES.MCP_PROXY_API_PORTAL_UNPUBLISH);
+  const canOpenPublishPage =
+    hasPermission(SCOPES.MCP_PROXY_API_PORTAL_PUBLISH) ||
+    hasPermission(SCOPES.MCP_PROXY_API_PORTAL_UNPUBLISH) ||
+    hasPermission(SCOPES.MCP_PROXY_API_PORTAL_MANAGE);
   const [server, setServer] = useState<MCPServer | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingChanges, setIsSavingChanges] = useState(false);
-  const [deployedGateways, setDeployedGateways] = useState<Gateway[]>([]);
+  const { gateways: deployedGateways, isLoading: isGatewaysLoading } =
+    useMcpDeployedGateways(organizationId, serverId ?? '');
   const [selectedGatewayId, setSelectedGatewayId] = useState('');
-  const [isGatewaysLoading, setIsGatewaysLoading] = useState(false);
   const [tabIndex, setTabIndex] = useState(0);
   const [selectedPolicies, setSelectedPolicies] = useState<SelectedPolicy[]>(
     []
@@ -275,25 +280,11 @@ export default function ExternalServersOverview(): JSX.Element {
   const [activeDeploymentCount, setActiveDeploymentCount] = useState<number | null>(null);
   const isReadOnlyServer = Boolean(server?.readOnly);
 
-  // API Portal publish state. isAPIPortalAvailable depends only on local
-  // state (feature flag + at least one active gateway deployment), never on
-  // a network round trip — a status-check failure must not hide the action.
-  const [isAPIPortalAvailable, setIsAPIPortalAvailable] = useState(false);
-  const [isPublished, setIsPublished] = useState(false)
-  const [isPublishStatusUnknown, setIsPublishStatusUnknown] = useState(true);
-  /**
-   * Where "View in API Portal" points: the PORTAL's own address, resolved
-   * once per organization (see `resolveApiPortalUrl`) rather than taken from
-   * the listing's `endpoints.productionUrl`, which is the API's invocation
-   * endpoint — for an MCP proxy, the gateway URL — and sent this link at the
-   * gateway instead of the portal.
-   */
-  const [apiPortalUrl, setApiPortalUrl] = useState<string | undefined>();
+  // Whether this proxy is listed on any MCP Hub. null until known, and when the
+  // lookup fails: that leaves the Publish action available rather than guessing.
+  const [isPublished, setIsPublished] = useState<boolean | null>(null);
   const [isPublishStatusLoading, setIsPublishStatusLoading] = useState(false);
-  const [isPublishActionLoading, setIsPublishActionLoading] = useState(false);
-  const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
-  const [isUnpublishConfirmOpen, setIsUnpublishConfirmOpen] = useState(false);
-  const [publishDialogGatewayId, setPublishDialogGatewayId] = useState('');
+  const [isContextCopied, setIsContextCopied] = useState(false);
 
   // Backend Connection tab
   const [endpointUrl, setEndpointUrl] = useState('');
@@ -366,103 +357,14 @@ export default function ExternalServersOverview(): JSX.Element {
     };
   }, [serverId, organizationId, apimBaseUrl]);
 
-  // Fetch gateways and MCP server deployments for invoke URL
+  // Keep the chosen gateway while it is still deployed, otherwise fall back to the newest.
   useEffect(() => {
-    if (!organizationId || !serverId) {
-      setDeployedGateways([]);
-      setSelectedGatewayId('');
-      setIsGatewaysLoading(false);
-      return;
-    }
-
-    let isMounted = true;
-    void (async () => {
-      setIsGatewaysLoading(true);
-      try {
-        const gatewaysResponse = await getGateways(organizationId);
-        const availableGateways = gatewaysResponse.list || [];
-
-        // Fetch deployments per gateway (same pattern as LLMProxyOverviewTab)
-        const deploymentPromises = availableGateways.map((gateway) =>
-          getMCPServerDeployments(
-            serverId,
-            apimBaseUrl,
-            gateway.id
-          ).catch((error) => {
-            logger.error(
-              `Failed to fetch deployments for gateway ${gateway.id}:`,
-              error
-            );
-            return { list: [] as DeploymentResponse[], count: 0 };
-          })
-        );
-
-        const deploymentResponses = await Promise.all(deploymentPromises);
-        if (!isMounted) return;
-
-        const allDeployments = deploymentResponses.flatMap(
-          (response) => response.list
-        );
-        const deployedEntries = allDeployments.filter(
-          (deployment) => deployment.status === 'DEPLOYED'
-        );
-
-        if (availableGateways.length === 0 || deployedEntries.length === 0) {
-          setDeployedGateways([]);
-          setSelectedGatewayId('');
-          return;
-        }
-
-        const latestDeploymentTimeByGateway = new Map<string, number>();
-        deployedEntries.forEach((deployment) => {
-          const nextTime = new Date(deployment.createdAt || 0).getTime();
-          const currentTime = latestDeploymentTimeByGateway.get(
-            deployment.gatewayId
-          );
-          if (currentTime === undefined || nextTime > currentTime) {
-            latestDeploymentTimeByGateway.set(deployment.gatewayId, nextTime);
-          }
-        });
-
-        const sortedDeployedGateways = availableGateways
-          .filter((gateway) => latestDeploymentTimeByGateway.has(gateway.id))
-          .sort((a, b) => {
-            const timeA = latestDeploymentTimeByGateway.get(a.id) || 0;
-            const timeB = latestDeploymentTimeByGateway.get(b.id) || 0;
-            return timeB - timeA;
-          });
-
-        setDeployedGateways(sortedDeployedGateways);
-        setSelectedGatewayId((currentSelectedId) => {
-          if (
-            currentSelectedId &&
-            sortedDeployedGateways.some(
-              (gateway) => gateway.id === currentSelectedId
-            )
-          ) {
-            return currentSelectedId;
-          }
-          return sortedDeployedGateways[0]?.id || '';
-        });
-      } catch (gatewayError) {
-        if (!isMounted) return;
-        logger.error(
-          'Failed to fetch deployed gateways for invoke URL generation:',
-          gatewayError
-        );
-        setDeployedGateways([]);
-        setSelectedGatewayId('');
-      } finally {
-        if (isMounted) {
-          setIsGatewaysLoading(false);
-        }
-      }
-    })();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [organizationId, serverId, apimBaseUrl]);
+    setSelectedGatewayId((current) =>
+      deployedGateways.some((gateway) => gateway.id === current)
+        ? current
+        : (deployedGateways[0]?.id ?? '')
+    );
+  }, [deployedGateways]);
 
   useEffect(() => {
     if (!organizationId || !serverId || !isReadOnlyServer || !canDeleteMcpProxy) {
@@ -519,52 +421,44 @@ export default function ExternalServersOverview(): JSX.Element {
     }
   };
 
-  // Shared by the Overview's "invoke URL" display/copy and by the publish flow,
-  // which writes the chosen gateway's URL into the publication draft. Returns
-  // the final, client-facing MCP endpoint URL (including the /mcp path) so
-  // every surface — displayed, copied and published — shows the same value.
-  const buildGatewayInvokeUrl = useCallback(
-    (gatewayId: string) => {
-      const gateway = deployedGateways.find((candidate) => candidate.id === gatewayId);
-      const vhost = (gateway?.endpoints?.[0] || gateway?.vhost)?.trim();
-      if (!vhost) return '';
-
-      const normalizedBase = /^https?:\/\//i.test(vhost)
-        ? vhost.replace(/\/+$/, '')
-        : `https://${vhost.replace(/\/+$/, '')}`;
-      const context = (server?.context || '/').trim();
-      const normalizedContext = context
-        ? context.startsWith('/')
-          ? context
-          : `/${context}`
-        : '/';
-      const contextWithoutTrailingSlash = normalizedContext.replace(/\/+$/, '');
-      return `${normalizedBase}${contextWithoutTrailingSlash}/mcp`;
-    },
-    [deployedGateways, server?.context]
-  );
-
   const generatedInvokeUrl = useMemo(
-    () => buildGatewayInvokeUrl(selectedGatewayId),
-    [buildGatewayInvokeUrl, selectedGatewayId]
+    () =>
+      buildMcpInvokeUrl(
+        deployedGateways.find((gateway) => gateway.id === selectedGatewayId),
+        server?.context
+      ),
+    [deployedGateways, selectedGatewayId, server?.context]
   );
 
-  const handleCopyInvokeUrl = async () => {
-    if (!generatedInvokeUrl) return;
-    const fullUrl = generatedInvokeUrl;
+  // Resolves true when the text reached the clipboard through the async API; the
+  // textarea fallback for older browsers copies silently.
+  const copyText = async (text: string): Promise<boolean> => {
     try {
-      await navigator.clipboard.writeText(fullUrl);
-      showSnackbar('URL copied to clipboard.', 'success');
+      await navigator.clipboard.writeText(text);
+      return true;
     } catch {
       const textarea = document.createElement('textarea');
-      textarea.value = fullUrl;
+      textarea.value = text;
       textarea.style.position = 'fixed';
       textarea.style.opacity = '0';
       document.body.appendChild(textarea);
       textarea.select();
       document.execCommand('copy');
       document.body.removeChild(textarea);
+      return false;
     }
+  };
+
+  const handleCopyInvokeUrl = async () => {
+    if (generatedInvokeUrl && (await copyText(generatedInvokeUrl))) {
+      showSnackbar('URL copied to clipboard.', 'success');
+    }
+  };
+
+  const handleCopyContext = async () => {
+    if (!(await copyText(server?.context || '/'))) return;
+    setIsContextCopied(true);
+    window.setTimeout(() => setIsContextCopied(false), 1500);
   };
 
   // Convert server.policies -> SelectedPolicy[] on load
@@ -985,159 +879,36 @@ export default function ExternalServersOverview(): JSX.Element {
     }
   };
 
-  // Button visibility depends only on local state — a feature flag plus at
-  // least one active gateway deployment — never on the status check below,
-  // so a failed/not-yet-implemented publish backend can't hide the action.
   useEffect(() => {
-    setIsAPIPortalAvailable(API_PORTAL_ENABLED && deployedGateways.length > 0);
-  }, [deployedGateways]);
-
-  // The portal's address, not the listing's: read once per organization, and
-  // independent of whether this server is published — it is the same portal for
-  // every listing, so it is not re-read on publish/unpublish.
-  useEffect(() => {
-    if (!isAPIPortalAvailable || !organizationId) return;
+    if (!API_PORTAL_ENABLED || !serverId || !organizationId) return;
     let cancelled = false;
-    void (async () => {
-      const url = await resolveApiPortalUrl(DEFAULT_API_PORTAL_ID, apimBaseUrl);
-      if (!cancelled) setApiPortalUrl(url);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [apimBaseUrl, isAPIPortalAvailable, organizationId]);
-
-  useEffect(() => {
-    if (!isAPIPortalAvailable || isLoading || !server || !organizationId) return;
-    setIsPublishStatusUnknown(true);
-    setIsPublished(false);
-    let cancelled = false;
-    void (async () => {
-      setIsPublishStatusLoading(true);
-      try {
-        const publication = await mcpProxiesApis.getMcpProxyApiPortalPublication(
-          DEFAULT_API_PORTAL_ID,
-          server.id,
-          apimBaseUrl
-        );
-        if (cancelled) return;
-        setIsPublished(true);
-        setIsPublishStatusUnknown(false);
-      } catch (err) {
-        if (cancelled) return;
-        if (getHttpStatus(err) === 404) {
-          // No publication record — not published, not an error.
-          setIsPublished(false);
-          setIsPublishStatusUnknown(false);
-        } else {
-          // Status is genuinely unknown (e.g. the publish backend for this
-          // contract isn't wired up yet) — keep the action disabled rather
-          // than defaulting to "not published", which could let a Publish
-          // click race an actual, already-published state.
-          setIsPublishStatusUnknown(true);
-          logger.error('Failed to check API Portal publish status', err);
-          showSnackbar(
-            getErrorMessage(err, 'Failed to check API Portal publish status'),
-            'error'
-          );
+    setIsPublishStatusLoading(true);
+    mcpProxiesApis
+      .listMcpProxyApiPortalPublications(serverId, apimBaseUrl)
+      .then((summary) => {
+        if (!cancelled) {
+          setIsPublished(summary.list.some(({ status }) => isListedOnPortal(status)));
         }
-      } finally {
+      })
+      .catch((err) => {
+        logger.error('Failed to check MCP Hub publish status', err);
+        if (!cancelled) setIsPublished(null);
+      })
+      .finally(() => {
         if (!cancelled) setIsPublishStatusLoading(false);
-      }
-    })();
+      });
     return () => {
       cancelled = true;
     };
-  }, [isAPIPortalAvailable, isLoading, server, organizationId, apimBaseUrl]);
-
-  const handleOpenPublishDialog = () => {
-    setPublishDialogGatewayId(selectedGatewayId || deployedGateways[0]?.id || '');
-    setIsPublishDialogOpen(true);
-  };
-
-  const handleConfirmPublish = async () => {
-    if (!server || !publishDialogGatewayId) return;
-    setIsPublishActionLoading(true);
-    setIsPublishDialogOpen(false);
-    try {
-      // The BFF saves this as the publication draft and then publishes it:
-      // publish itself takes no body, so the gateway picked in the dialog
-      // reaches the listing as the draft's production endpoint.
-      //
-      // Saving a draft replaces it wholesale, so send the full intended state:
-      // start from the draft already stored (when one exists) and overlay only
-      // the fields this dialog controls. Sending just those fields would clear
-      // tags, labels, owners, agent visibility, subscription plans and
-      // documents that were set elsewhere.
-      let existingDraft: PublicationDraftDetails | undefined;
-      try {
-        existingDraft = await mcpProxiesApis.getMcpProxyApiPortalDraft(
-          DEFAULT_API_PORTAL_ID,
-          server.id,
-          apimBaseUrl
-        );
-      } catch (err) {
-        if (getHttpStatus(err) !== 404) throw err;
-        // 404 — publishing for the first time, nothing to preserve.
-      }
-
-      // Read-only audit/asset fields on the fetched draft aren't part of the
-      // input schema — drop them rather than echoing them back on the PUT.
-      const {
-        createdAt: _createdAt,
-        createdBy: _createdBy,
-        updatedAt: _updatedAt,
-        updatedBy: _updatedBy,
-        hasThumbnail: _hasThumbnail,
-        hasLandingPage: _hasLandingPage,
-        ...existingDraftInput
-      }: Partial<PublicationDraftDetails> = existingDraft ?? {};
-
-      const draft: PublicationDraftDetailsInput = {
-        ...existingDraftInput,
-        displayName: server.displayName,
-        version: server.version || '1.0.0',
-        description: server.description,
-        endpoints: {
-          ...existingDraftInput.endpoints,
-          productionUrl: buildGatewayInvokeUrl(publishDialogGatewayId),
-        },
-      };
-
-      await mcpProxiesApis.publishMcpProxyToApiPortal(
-        DEFAULT_API_PORTAL_ID,
-        server.id,
-        draft
-      );
-      setIsPublished(true);
-      showSnackbar('MCP Proxy published to the API Portal.', 'success');
-    } catch (err) {
-      showSnackbar(getErrorMessage(err, 'Failed to publish MCP Proxy.'), 'error');
-    } finally {
-      setIsPublishActionLoading(false);
-    }
-  };
-
-  const handleConfirmUnpublish = async () => {
-    if (!server) return;
-    setIsPublishActionLoading(true);
-    setIsUnpublishConfirmOpen(false);
-    try {
-      await mcpProxiesApis.unpublishMcpProxyFromApiPortal(DEFAULT_API_PORTAL_ID, server.id, apimBaseUrl);
-      setIsPublished(false);
-      showSnackbar('MCP Proxy unpublished from the API Portal.', 'success');
-    } catch (err) {
-      showSnackbar(getErrorMessage(err, 'Failed to unpublish MCP Proxy.'), 'error');
-    } finally {
-      setIsPublishActionLoading(false);
-    }
-  };
+  }, [serverId, organizationId, apimBaseUrl]);
 
   const handleStepBannerClick = (stepId: ExternalServerStepBannerStepId) => {
     if (stepId === 'add-policies') {
       setTabIndex(1);
     } else if (stepId === 'deploy-to-gateway') {
       navigate('deploy');
+    } else if (stepId === 'publish-to-mcp-hub') {
+      navigate(publishUrl);
     }
   };
 
@@ -1243,6 +1014,15 @@ export default function ExternalServersOverview(): JSX.Element {
     endpointUrl,
   ]);
 
+  const hasDeployments = deployedGateways.length > 0;
+  const publicationStatusLabel = isPublishStatusLoading
+    ? 'Checking…'
+    : isPublished === null
+      ? 'Status unavailable'
+      : isPublished
+        ? 'Published'
+        : 'Not published';
+
   if (isLoading) {
     return (
       <PageContent fullWidth>
@@ -1303,192 +1083,129 @@ export default function ExternalServersOverview(): JSX.Element {
       <ExternalServerStepBanner
         serverName={server?.displayName}
         hasPolicies={(server?.policies?.length ?? 0) > 0}
-        hasDeployments={deployedGateways.length > 0}
+        hasDeployments={hasDeployments}
+        hasPublication={API_PORTAL_ENABLED ? isPublished === true : undefined}
         onStepClick={handleStepBannerClick}
       />
 
       <Stack spacing={3} sx={{ mt: 2, mb: 4 }}>
-        {/* Top Card - Server Info */}
-        <Card>
-          <Box
-            sx={{
-              display: 'flex',
-              alignItems: 'stretch',
-              justifyContent: 'space-between',
-              flexWrap: 'wrap',
-              gap: 2,
-              padding: 2,
-            }}
+        {/* Top Card - Server Info and lifecycle */}
+        <Card sx={{ overflow: 'hidden' }}>
+          <Stack
+            direction="row"
+            alignItems="flex-start"
+            flexWrap="wrap"
+            gap={3}
+            sx={{ p: 3 }}
           >
-            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
-              <Avatar
-                sx={{
-                  width: 72,
-                  height: 72,
-                  fontWeight: 600,
-                  fontSize: 28,
-                  bgcolor: 'primary.light',
-                  color: 'primary.contrastText',
-                }}
+            <Avatar
+              variant="rounded"
+              sx={{
+                width: 88,
+                height: 88,
+                fontWeight: 600,
+                fontSize: 34,
+                borderRadius: 2,
+                bgcolor: 'primary.light',
+                color: 'primary.contrastText',
+              }}
+            >
+              {getInitials(server.displayName)}
+            </Avatar>
+            <Stack spacing={1.25} sx={{ flex: '1 1 380px', minWidth: 0 }}>
+              <Stack
+                direction="row"
+                spacing={1.5}
+                alignItems="center"
+                flexWrap="wrap"
               >
-                {getInitials(server.displayName)}
-              </Avatar>
-              <Stack spacing={0.75} sx={{ minWidth: 0 }}>
+                <Typography variant="h3" sx={{ overflowWrap: 'anywhere' }}>
+                  {server.displayName}
+                </Typography>
+                <Chip
+                  label={server.version}
+                  size="small"
+                  variant="outlined"
+                  color="primary"
+                />
+              </Stack>
+              <Stack
+                direction="row"
+                alignItems="center"
+                flexWrap="wrap"
+                columnGap={2}
+                rowGap={1}
+              >
                 <Stack
                   direction="row"
-                  spacing={1}
                   alignItems="center"
-                  flexWrap="wrap"
+                  spacing={0.5}
+                  sx={{ pl: 1.25, pr: 0.5, borderRadius: 1, bgcolor: 'action.hover' }}
                 >
-                  <Typography variant="h3">{server.displayName}</Typography>
-                  <Chip
-                    label={server.version}
-                    size="small"
-                    variant="outlined"
-                    color="primary"
-                  />
-                  {/* Edit page (name/version/context/description). Enabled even for
-                      gateway-created MCP proxies — the page keeps the runtime fields
-                      read-only and allows only the description. */}
-                  <Tooltip title="Edit MCP Proxy">
+                  <Typography variant="caption" color="text.secondary">
+                    <FormattedMessage
+                      id="aiWorkspace.pages.appShell.appShellPages.externalServers.overview.context.label"
+                      defaultMessage="Context"
+                    />
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                    {server.context || '/'}
+                  </Typography>
+                  <Tooltip title={isContextCopied ? 'Copied' : 'Copy context'}>
                     <IconButton
-                      component={RouterLink}
-                      to="edit"
                       size="small"
+                      aria-label="Copy context"
+                      onClick={() => void handleCopyContext()}
                     >
-                      <Edit size={16} />
+                      {isContextCopied ? (
+                        <Check size={14} />
+                      ) : (
+                        <Copy size={14} />
+                      )}
                     </IconButton>
                   </Tooltip>
                 </Stack>
-                <Typography variant="body2" color="text.secondary">
-                  {server.description}
-                </Typography>
-                <Stack spacing={0.2}>
-                  <Stack direction="row" alignItems="center" gap={2}>
-                    <Typography variant="caption" color="text.secondary">
-                      <FormattedMessage
-                        id="aiWorkspace.pages.appShell.appShellPages.externalServers.overview.context.label"
-                        defaultMessage="Context :"
-                      />
-                    </Typography>
-                    <Typography variant="body2">
-                      {server.context || '/'}
-                    </Typography>
-                  </Stack>
+                <Tooltip
+                  title={
+                    server.updatedAt
+                      ? new Date(server.updatedAt).toLocaleString()
+                      : ''
+                  }
+                >
                   <Stack direction="row" spacing={0.75} alignItems="center">
+                    <Clock size={14} />
                     <Typography variant="caption" color="text.secondary">
                       <FormattedMessage
                         id="aiWorkspace.pages.appShell.appShellPages.externalServers.overview.created"
-                        defaultMessage="Last updated :"
+                        defaultMessage="Updated {time}"
+                        values={{ time: formatRelativeTime(server.updatedAt) }}
                       />
                     </Typography>
-                    <Clock size={14} />
-                    <Typography variant="caption" color="text.secondary">
-                      {formatRelativeTime(server.updatedAt)}
-                    </Typography>
                   </Stack>
-                </Stack>
+                </Tooltip>
               </Stack>
-            </Box>
-            <Stack
-              direction="column"
-              justifyContent="space-between"
-              alignItems="flex-end"
-              spacing={1.5}
-              sx={{ alignSelf: 'stretch' }}
-            >
-              {/* For gateway-created (read-only) proxies, and for users holding only
-                  the deployment-read scope, the deployments remain viewable (deploy/
-                  redeploy/restore/undeploy are disabled on the page itself), so the
-                  button navigates but is relabelled "View Deployments". Without even
-                  deployment-read there is nothing to see, so it is disabled. */}
-              <DisabledActionTooltip
-                disabled={!canViewDeployments}
-                title={NO_PERMISSION_TOOLTIP}
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ maxWidth: 620 }}
               >
-                <Button
-                  variant="contained"
+                {server.description}
+              </Typography>
+            </Stack>
+            <Stack direction="row" alignItems="center" spacing={0.5}>
+              {/* Edit page (name/version/context/description). Enabled even for
+                  gateway-created MCP proxies — the page keeps the runtime fields
+                  read-only and allows only the description. */}
+              <Tooltip title="Edit MCP Proxy">
+                <IconButton
                   component={RouterLink}
-                  to="deploy"
-                  onClick={isReadOnlyServer ? undefined : handleBlockedNavigation}
-                  disabled={!canViewDeployments}
-                  sx={DISABLED_ACTION_SX}
+                  to="edit"
+                  aria-label="Edit MCP Proxy"
                 >
-                  {isReadOnlyServer || !canDeployMcpProxy ? (
-                    <FormattedMessage
-                      id="aiWorkspace.pages.appShell.appShellPages.externalServers.overview.viewDeployments"
-                      defaultMessage="View Deployments"
-                    />
-                  ) : (
-                    <FormattedMessage
-                      id="aiWorkspace.pages.appShell.appShellPages.externalServers.overview.deployToGateway"
-                      defaultMessage="Deploy to Gateway"
-                    />
-                  )}
-                </Button>
-              </DisabledActionTooltip>
-              {isAPIPortalAvailable ? (
-                <Stack spacing={0.5} alignItems="flex-end">
-                  <DisabledActionTooltip
-                    disabled={
-                      deployedGateways.length === 0 ||
-                      isPublishStatusUnknown ||
-                      (isPublished ? !canUnpublishFromAPIPortal : !canPublishToAPIPortal)
-                    }
-                    title={
-                      deployedGateways.length === 0
-                        ? 'Deploy to a gateway before publishing'
-                        : isPublishStatusUnknown
-                          ? 'Unable to verify publish status'
-                          : NO_PERMISSION_TOOLTIP
-                    }
-                  >
-                    <Button
-                      variant="outlined"
-                      color={isPublished ? 'error' : 'primary'}
-                      disabled={
-                        deployedGateways.length === 0 ||
-                        isPublishStatusLoading ||
-                        isPublishActionLoading ||
-                        isPublishStatusUnknown ||
-                        (isPublished ? !canUnpublishFromAPIPortal : !canPublishToAPIPortal)
-                      }
-                      onClick={
-                        isPublished
-                          ? () => setIsUnpublishConfirmOpen(true)
-                          : handleOpenPublishDialog
-                      }
-                      startIcon={
-                        isPublishStatusLoading || isPublishActionLoading ? (
-                          <CircularProgress size={14} color="inherit" />
-                        ) : undefined
-                      }
-                      sx={DISABLED_ACTION_SX}
-                    >
-                      {isPublished ? 'Unpublish from API Portal' : 'Publish to API Portal'}
-                    </Button>
-                  </DisabledActionTooltip>
-                  {isPublished && apiPortalUrl ? (
-                    <Box
-                      component="a"
-                      href={apiPortalUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 0.5,
-                        fontSize: '0.75rem',
-                        color: 'primary.main',
-                        textDecoration: 'none',
-                        '&:hover': { textDecoration: 'underline' },
-                      }}
-                    >
-                      View in API Portal <ExternalLink size={12} />
-                    </Box>
-                  ) : null}
-                </Stack>
-              ) : null}
+                  <Edit size={18} />
+                </IconButton>
+              </Tooltip>
+              <Divider orientation="vertical" flexItem sx={{ my: 1 }} />
               <DisabledActionTooltip
                 disabled={!canDeleteMcpProxy || Boolean(deleteBlockedReason)}
                 title={
@@ -1504,10 +1221,92 @@ export default function ExternalServersOverview(): JSX.Element {
                   aria-label={`Delete ${server.displayName}`}
                   data-cyid="delete-mcp-proxy-button"
                 >
-                  <Trash2 size={16} />
+                  <Trash2 size={18} />
                 </IconButton>
               </DisabledActionTooltip>
             </Stack>
+          </Stack>
+
+          <Divider />
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: {
+                xs: '1fr',
+                md: API_PORTAL_ENABLED ? 'repeat(2, minmax(0, 1fr))' : '1fr',
+              },
+              gap: '1px',
+              bgcolor: 'divider',
+            }}
+          >
+            <OverviewLifecycleStage
+              icon={<Rocket size={20} />}
+              status={hasDeployments ? 'Deployed' : 'Not deployed'}
+              isDone={hasDeployments}
+              action={
+                // For gateway-created (read-only) proxies, and for users holding only
+                // the deployment-read scope, the deployments remain viewable (deploy/
+                // redeploy/restore/undeploy are disabled on the page itself), so the
+                // button navigates but is relabelled "View Deployments". Without even
+                // deployment-read there is nothing to see, so it is disabled.
+                <DisabledActionTooltip
+                  disabled={!canViewDeployments}
+                  title={NO_PERMISSION_TOOLTIP}
+                >
+                  <Button
+                    variant={hasDeployments ? 'outlined' : 'contained'}
+                    component={RouterLink}
+                    to="deploy"
+                    onClick={isReadOnlyServer ? undefined : handleBlockedNavigation}
+                    disabled={!canViewDeployments}
+                    sx={DISABLED_ACTION_SX}
+                  >
+                    {isReadOnlyServer || !canDeployMcpProxy ? (
+                      <FormattedMessage
+                        id="aiWorkspace.pages.appShell.appShellPages.externalServers.overview.viewDeployments"
+                        defaultMessage="View Deployments"
+                      />
+                    ) : hasDeployments ? (
+                      <FormattedMessage
+                        id="aiWorkspace.pages.appShell.appShellPages.externalServers.overview.redeploy"
+                        defaultMessage="Redeploy"
+                      />
+                    ) : (
+                      <FormattedMessage
+                        id="aiWorkspace.pages.appShell.appShellPages.externalServers.overview.deployToGateway"
+                        defaultMessage="Deploy to Gateway"
+                      />
+                    )}
+                  </Button>
+                </DisabledActionTooltip>
+              }
+            />
+            {API_PORTAL_ENABLED ? (
+              <OverviewLifecycleStage
+                icon={<Megaphone size={20} />}
+                status={publicationStatusLabel}
+                isDone={isPublished === true}
+                action={
+                  <DisabledActionTooltip
+                    disabled={!canOpenPublishPage}
+                    title={NO_PERMISSION_TOOLTIP}
+                  >
+                    <Button
+                      variant={
+                        hasDeployments && !isPublished ? 'contained' : 'outlined'
+                      }
+                      component={RouterLink}
+                      to={publishUrl}
+                      onClick={handleBlockedNavigation}
+                      disabled={!canOpenPublishPage}
+                      sx={DISABLED_ACTION_SX}
+                    >
+                      {isPublished ? 'Republish' : 'Publish to MCP Hub'}
+                    </Button>
+                  </DisabledActionTooltip>
+                }
+              />
+            ) : null}
           </Box>
         </Card>
 
@@ -1885,85 +1684,6 @@ export default function ExternalServersOverview(): JSX.Element {
         onClose={() => setIsCapabilitiesDrawerOpen(false)}
         onApply={handleApplyCapabilities}
       />
-
-      <Dialog
-        open={isPublishDialogOpen}
-        onClose={() => setIsPublishDialogOpen(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>Publish to API Portal</DialogTitle>
-        <DialogContent>
-          <Stack spacing={2} sx={{ mt: 1 }}>
-            <Typography variant="body2" color="text.secondary">
-              Select the gateway endpoint that clients will use to connect to this MCP
-              proxy in the API Portal.
-            </Typography>
-            <FormControl fullWidth>
-              <FormLabel>Gateway</FormLabel>
-              <Select
-                size="small"
-                value={publishDialogGatewayId}
-                onChange={(e) => setPublishDialogGatewayId(String(e.target.value))}
-              >
-                {deployedGateways.map((gateway) => (
-                  <MenuItem key={gateway.id} value={gateway.id}>
-                    {gateway.displayName || gateway.name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button
-            variant="outlined"
-            color="secondary"
-            onClick={() => setIsPublishDialogOpen(false)}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            disabled={!publishDialogGatewayId || isPublishActionLoading}
-            onClick={() => void handleConfirmPublish()}
-          >
-            Publish
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <Dialog
-        open={isUnpublishConfirmOpen}
-        onClose={() => setIsUnpublishConfirmOpen(false)}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle>Unpublish from API Portal</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2">
-            Are you sure you want to unpublish <strong>{server.displayName}</strong> from
-            the API Portal? Clients will no longer be able to discover it.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button
-            variant="outlined"
-            color="secondary"
-            onClick={() => setIsUnpublishConfirmOpen(false)}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            color="error"
-            disabled={isPublishActionLoading}
-            onClick={() => void handleConfirmUnpublish()}
-          >
-            Unpublish
-          </Button>
-        </DialogActions>
-      </Dialog>
     </PageContent>
   );
 }
