@@ -83,6 +83,8 @@ type Overrides = { orgId?: string };
 type UseApiThumbnailResult = {
   /** `blob:` URL for an `<img>` tag. `undefined` while loading, when no thumbnail exists, or on a real error. */
   url: string | undefined;
+  /** The image itself, for a caller that sends it on. `undefined` in the same cases as `url`. */
+  blob: Blob | undefined;
   /** True on first fetch (branch here, not on `isLoading`, since the query is scope-gated). */
   isPending: boolean;
   /** A real error. "No thumbnail" is a successful `null` value, not an error. */
@@ -119,7 +121,7 @@ export const useApiThumbnail = (
     return retainObjectUrl(blob);
   }, [blob]);
 
-  return { url, isPending: query.isPending, error: query.error as ApiError | null };
+  return { url, blob, isPending: query.isPending, error: query.error as ApiError | null };
 };
 
 /**
