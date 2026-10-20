@@ -25,17 +25,20 @@ import {
   Stack,
   Typography,
 } from '@wso2/oxygen-ui';
-import { ArrowRight, Rocket, SlidersHorizontal, X } from '@wso2/oxygen-ui-icons-react';
+import { ArrowRight, Megaphone, Rocket, SlidersHorizontal, X } from '@wso2/oxygen-ui-icons-react';
 import QuickStartCompletedIcon from '../../../../../assets/images/quickStart/QuickStartCompletedIcon';
 
 export type ExternalServerStepBannerStepId =
   | 'add-policies'
-  | 'deploy-to-gateway';
+  | 'deploy-to-gateway'
+  | 'publish-to-mcp-hub';
 
 export type ExternalServerStepBannerProps = {
   serverName?: string;
   hasPolicies: boolean;
   hasDeployments: boolean;
+  /** Whether it is published. Leave unset where publishing is not offered: the step is then not shown. */
+  hasPublication?: boolean;
   onStepClick?: (stepId: ExternalServerStepBannerStepId) => void;
   /** Shown when serverName is empty. */
   fallbackName?: string;
@@ -43,7 +46,7 @@ export type ExternalServerStepBannerProps = {
   description?: string;
 };
 
-const TOTAL_STEPS = 3;
+const BASE_STEPS = 3;
 
 const stepButtonSx = {
   border: '1px solid',
@@ -71,6 +74,7 @@ export default function ExternalServerStepBanner({
   serverName,
   hasPolicies,
   hasDeployments,
+  hasPublication,
   onStepClick,
   fallbackName = 'External Server',
   description = 'Click each step to configure and deploy your MCP Proxy.',
@@ -78,8 +82,11 @@ export default function ExternalServerStepBanner({
   const [isVisible, setIsVisible] = useState(true);
 
   const resolvedServerName = serverName?.trim() || fallbackName;
-  const completedSteps = 1 + (hasPolicies ? 1 : 0) + (hasDeployments ? 1 : 0);
-  const progressValue = (completedSteps / TOTAL_STEPS) * 100;
+  const showPublishStep = hasPublication !== undefined;
+  const totalSteps = BASE_STEPS + (showPublishStep ? 1 : 0);
+  const completedSteps =
+    1 + (hasPolicies ? 1 : 0) + (hasDeployments ? 1 : 0) + (hasPublication ? 1 : 0);
+  const progressValue = (completedSteps / totalSteps) * 100;
 
   if (!isVisible) return null;
 
@@ -138,7 +145,7 @@ export default function ExternalServerStepBanner({
             }}
           >
             <Typography sx={{ fontWeight: 700, lineHeight: 1, fontSize: 18 }}>
-              {`${completedSteps}/${TOTAL_STEPS}`}
+              {`${completedSteps}/${totalSteps}`}
             </Typography>
             <Typography sx={{ lineHeight: 1.1, fontSize: 10, color: '#667085' }}>
               Steps
@@ -196,6 +203,22 @@ export default function ExternalServerStepBanner({
               </Typography>
               <ArrowRight size={16} color="#9b9b9b" />
             </Box>
+
+            {/* Step 4: Publish to MCP Hub */}
+            {showPublishStep ? (
+              <Box
+                component="button"
+                type="button"
+                onClick={() => onStepClick?.('publish-to-mcp-hub')}
+                sx={stepButtonSx}
+              >
+                {hasPublication ? <QuickStartCompletedIcon size={16} /> : <Megaphone size={16} />}
+                <Typography sx={{ fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap' }}>
+                  Publish to MCP Hub
+                </Typography>
+                <ArrowRight size={16} color="#9b9b9b" />
+              </Box>
+            ) : null}
           </Box>
         </Stack>
       </Stack>
