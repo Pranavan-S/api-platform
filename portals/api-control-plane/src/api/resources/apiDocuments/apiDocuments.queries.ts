@@ -55,12 +55,61 @@ export const nextDocumentsOffset = (last: ApiDocumentListResponse): number | und
   return last.list.length > 0 && next < total ? next : undefined;
 };
 
+/** The server's maximum page size. */
+const DOCUMENTS_PAGE_SIZE = 100;
+/** Bounds the loop so a wrong `pagination.total` cannot make it run forever. */
+const DOCUMENTS_MAX_PAGES = 50;
+
+/** Pages through the documents until `pagination.total` are held; duplicates from a mid-fetch create are dropped. */
+const fetchAllApiDocuments = async (
+  org: OrgScope,
+  apiType: string,
+  apiId: string,
+  signal: AbortSignal
+): Promise<ApiDocumentListResponse> => {
+  const documents: ApiDocumentListResponse['list'] = [];
+  const seen = new Set<string>();
+  let received = 0;
+
+  for (let page = 0; page < DOCUMENTS_MAX_PAGES; page += 1) {
+    const response = await listApiDocuments(
+      apiType,
+      apiId,
+      { limit: DOCUMENTS_PAGE_SIZE, offset: received },
+      { orgId: org, signal }
+    );
+    received += response.list.length;
+    for (const document of response.list) {
+      if (seen.has(document.id)) continue;
+      seen.add(document.id);
+      documents.push(document);
+    }
+    if (response.list.length === 0 || received >= response.pagination.total) break;
+  }
+
+  return {
+    list: documents,
+    count: documents.length,
+    pagination: { total: documents.length, offset: 0, limit: documents.length },
+  };
+};
+
 export const apiDocumentQueries = {
   /** One explicit page — the overview's numbered pagination. */
   list: (org: OrgScope, apiType: string, apiId: string, query: ListApiDocumentsQuery = {}) =>
     queryOptions({
       queryKey: apiDocumentKeys.child(org, apiDocumentParentId(apiType, apiId), 'documents', query),
       queryFn: ({ signal }) => listApiDocuments(apiType, apiId, query, { orgId: org, signal }),
+      staleTime: staleTimes.standard,
+    }),
+
+  /** Every document of the API, across all pages, in the shape of a single list response. */
+  listAll: (org: OrgScope, apiType: string, apiId: string) =>
+    queryOptions({
+      queryKey: apiDocumentKeys.child(org, apiDocumentParentId(apiType, apiId), 'documents', {
+        pages: 'all',
+      }),
+      queryFn: ({ signal }) => fetchAllApiDocuments(org, apiType, apiId, signal),
       staleTime: staleTimes.standard,
     }),
 
