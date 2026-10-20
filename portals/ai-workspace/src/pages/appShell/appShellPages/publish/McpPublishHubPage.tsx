@@ -32,6 +32,7 @@ import { useFillScrollArea } from '../../../../hooks/useFillScrollArea';
 import { useFrozenWhile } from '../../../../hooks/useFrozenWhile';
 import { usePublishProject } from '../../../../hooks/usePublishProject';
 import { useMcpProxyDocuments } from '../../../../hooks/useMcpProxyDocuments';
+import { useObjectUrl } from '../../../../hooks/useObjectUrl';
 import { PLATFORM_API_BASE_URL } from '../../../../paths';
 import { getErrorCode, getErrorMessage } from '../../../../utils/apiError';
 
@@ -47,6 +48,7 @@ import {
   resolveDraftFormValues,
   sameSelection,
   validateDraftFormValues,
+  validateThumbnailFile,
   definitionToText,
   type DraftFormField,
   type DraftFormValues,
@@ -55,6 +57,7 @@ import { PublicationVersionCard, type PublicationVersionTone } from './Publicati
 import { PublicationVersionToggle } from './PublicationVersionToggle';
 import { PublishActionsBar } from './PublishActionsBar';
 import { ErrorState, LoadingState } from './PublishStates';
+import { usePublishAssets } from './usePublishAssets';
 import { usePublishPageData } from './usePublishPageData';
 
 const messages = defineMessages({
@@ -271,6 +274,8 @@ export default function McpPublishHubPage(): React.JSX.Element {
   const [values, setValues] = useState<DraftFormValues>(emptyDraftFormValues);
   const [touched, setTouched] = useState<Partial<Record<DraftFormField, boolean>>>({});
   const [definitionText, setDefinitionText] = useState('');
+  // The parts of the listing saved on their own: the thumbnail.
+  const assets = usePublishAssets(apiPortalId, serverId);
   // What the server holds for the fields shown, so edits made since can be told apart.
   const [saved, setSaved] = useState({ definitionText: '', values: emptyDraftFormValues });
   const [pendingAction, setPendingAction] = useState<PendingAction>('idle');
@@ -289,9 +294,13 @@ export default function McpPublishHubPage(): React.JSX.Element {
     if (initialized || !data.seed) return;
     setValues(data.seed.values);
     setDefinitionText(data.seed.definitionText);
+    assets.seed(data.seed);
     setSaved({ definitionText: data.seed.definitionText, values: data.seed.values });
     setInitialized(true);
-  }, [initialized, data.seed]);
+  }, [initialized, data.seed, assets.seed]);
+
+  const thumbnailUrl = useObjectUrl(assets.thumbnail);
+  const publishedThumbnailUrl = useObjectUrl(data.publishedThumbnail);
 
   // A document deleted elsewhere has no checkbox to clear but would still be submitted, so drop it
   // and say so.
@@ -342,6 +351,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
   const showingPublished = view === 'published';
   const hasUnsavedChanges =
     definitionText !== saved.definitionText ||
+    assets.hasUnsavedChanges ||
     (Object.keys(values) as (keyof DraftFormValues)[]).some((field) => {
       const current = values[field];
       const savedValue = saved.values[field];
@@ -426,6 +436,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
     runAction('saving', intl.formatMessage(messages.saveFailed), async () => {
       if (!(await saveDetails())) return;
       const definitionSaved = await saveDefinition();
+      await assets.saveThumbnail();
       showSnackbar(
         definitionSaved
           ? intl.formatMessage(messages.draftSaved)
@@ -433,6 +444,16 @@ export default function McpPublishHubPage(): React.JSX.Element {
         definitionSaved ? 'success' : 'warning'
       );
     });
+
+  /** Takes an image the user picked as the thumbnail, unless the server would refuse it. */
+  const pickThumbnail = (file: File) => {
+    const problem = validateThumbnailFile(file);
+    if (problem) {
+      showSnackbar(intl.formatMessage(problem), 'error');
+      return;
+    }
+    assets.setThumbnail(file);
+  };
 
   // Each terminal action leaves this one portal's page behind for the listing,
   // where the card now reflects the new status — there's nothing left to do
@@ -446,6 +467,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
       // partial save, which would publish whatever definition was already
       // there rather than what the user is looking at.
       if (!(await saveDefinition())) return;
+      await assets.saveThumbnail();
       try {
         await mcpProxiesApis.publishSavedMcpProxyDraft(apiPortalId, serverId, PLATFORM_API_BASE_URL);
       } catch (error) {
@@ -519,7 +541,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
         );
       }
       return tab === 'details' ? (
-        <McpProxyDetailsTab readOnly values={publishedValues} />
+        <McpProxyDetailsTab readOnly thumbnailUrl={publishedThumbnailUrl} values={publishedValues} />
       ) : data.publishedDefinition.isLoading ? (
         <LoadingState label={intl.formatMessage(messages.loadingPublishedSpec)} />
       ) : data.publishedDefinition.failed ? (
@@ -551,7 +573,9 @@ export default function McpPublishHubPage(): React.JSX.Element {
         }}
         onBlurField={markTouched}
         onChange={handleChange}
+        onThumbnailPick={pickThumbnail}
         productionUrlOptions={data.productionUrlOptions}
+        thumbnailUrl={thumbnailUrl}
         values={values}
       />
     ) : (

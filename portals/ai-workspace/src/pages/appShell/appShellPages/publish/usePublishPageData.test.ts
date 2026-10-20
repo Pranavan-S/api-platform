@@ -30,6 +30,8 @@ vi.mock('../../../../apis/MCP/mcpProxiesApis', () => ({
     getMcpProxyApiPortalPublication: vi.fn(),
     getMcpProxyApiPortalDraftDefinition: vi.fn(),
     getMcpProxyApiPortalPublicationDefinition: vi.fn(),
+    getMcpProxyApiPortalDraftThumbnail: vi.fn(),
+    getMcpProxyApiPortalPublicationThumbnail: vi.fn(),
   },
 }));
 const gateways = vi.hoisted(() => ({ value: { gateways: [] as unknown[], isLoading: false } }));
@@ -62,6 +64,8 @@ beforeEach(() => {
   api.getMcpProxyApiPortalPublication.mockReset().mockRejectedValue(notFound());
   api.getMcpProxyApiPortalDraftDefinition.mockReset().mockRejectedValue(notFound());
   api.getMcpProxyApiPortalPublicationDefinition.mockReset().mockRejectedValue(notFound());
+  api.getMcpProxyApiPortalDraftThumbnail.mockReset().mockRejectedValue(notFound());
+  api.getMcpProxyApiPortalPublicationThumbnail.mockReset().mockRejectedValue(notFound());
   vi.mocked(getApiPortal).mockReset().mockResolvedValue({ name: 'Main Hub' } as never);
 });
 
@@ -167,6 +171,50 @@ describe('usePublishPageData', () => {
     api.getMcpProxyApiPortalPublicationDefinition.mockRejectedValue(serverError());
     const { result } = load(true);
     await waitFor(() => expect(result.current.publishedDefinition.failed).toBe(true));
+  });
+
+  describe('the thumbnail', () => {
+    const draftImage = new Blob(['draft'], { type: 'image/png' });
+    const liveImage = new Blob(['live'], { type: 'image/png' });
+
+    it('is not read when no listing has one', async () => {
+      api.getMcpProxyApiPortalDraft.mockResolvedValue(DRAFT as never);
+      const { result } = load();
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(api.getMcpProxyApiPortalDraftThumbnail).not.toHaveBeenCalled();
+      expect(result.current.seed?.thumbnail).toBeUndefined();
+      expect(result.current.publishedThumbnail).toBeUndefined();
+    });
+
+    it('opens on the draft\'s own, which saving need not send again', async () => {
+      api.getMcpProxyApiPortalDraft.mockResolvedValue({ ...DRAFT, hasThumbnail: true } as never);
+      api.getMcpProxyApiPortalPublication.mockResolvedValue({ ...PUBLICATION, hasThumbnail: true } as never);
+      api.getMcpProxyApiPortalDraftThumbnail.mockResolvedValue(draftImage);
+      api.getMcpProxyApiPortalPublicationThumbnail.mockResolvedValue(liveImage);
+      const { result } = load();
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.seed?.thumbnail).toEqual({ blob: draftImage, inDraft: true });
+      expect(result.current.publishedThumbnail).toBe(liveImage);
+    });
+
+    it('falls back to the live listing\'s, which the draft would still have to store', async () => {
+      api.getMcpProxyApiPortalPublication.mockResolvedValue({ ...PUBLICATION, hasThumbnail: true } as never);
+      api.getMcpProxyApiPortalPublicationThumbnail.mockResolvedValue(liveImage);
+      const { result } = load();
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.seed?.thumbnail).toEqual({ blob: liveImage, inDraft: false });
+    });
+
+    it('does not fall through to the live one when the draft\'s cannot be read', async () => {
+      api.getMcpProxyApiPortalDraft.mockResolvedValue({ ...DRAFT, hasThumbnail: true } as never);
+      api.getMcpProxyApiPortalPublication.mockResolvedValue({ ...PUBLICATION, hasThumbnail: true } as never);
+      api.getMcpProxyApiPortalDraftThumbnail.mockRejectedValue(serverError());
+      api.getMcpProxyApiPortalPublicationThumbnail.mockResolvedValue(liveImage);
+      const { result } = load();
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.error).toBeUndefined();
+      expect(result.current.seed?.thumbnail).toBeUndefined();
+    });
   });
 
   it('reads everything again on refetch', async () => {

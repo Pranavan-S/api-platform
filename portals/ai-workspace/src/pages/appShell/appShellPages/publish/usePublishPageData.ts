@@ -32,8 +32,11 @@ import {
 } from './mcpPublishForm';
 import { useMcpDeployedGateways } from '../../../../hooks/useMcpDeployedGateways';
 
-/** What the editor opens with: the details and the definition, from the freshest tier that has them. */
-export type PublishSeed = { definitionText: string; values: DraftFormValues };
+/** `inDraft`: the draft already stores it, so saving need not send it. */
+export type ThumbnailSeed = { blob: Blob; inDraft: boolean };
+
+/** What the editor opens with: the details, definition and thumbnail, from the freshest tier that has each. */
+export type PublishSeed = { definitionText: string; thumbnail?: ThumbnailSeed; values: DraftFormValues };
 
 type Definition = McpDefinition | undefined;
 
@@ -47,6 +50,20 @@ async function orUndefinedOn404<T>(call: Promise<T>): Promise<T | undefined> {
   }
 }
 
+/**
+ * A part of a listing that the listing's `has…` flag says exists. One that cannot be read
+ * is left out rather than failing the page.
+ */
+async function readAsset<T>(exists: boolean | undefined, read: () => Promise<T>): Promise<T | undefined> {
+  if (!exists) return undefined;
+  try {
+    return await read();
+  } catch (error) {
+    logger.error('Failed to read a part of the publication:', error);
+    return undefined;
+  }
+}
+
 type Loaded = {
   server: MCPServer;
   portal?: ApiPortal;
@@ -54,6 +71,8 @@ type Loaded = {
   publication?: Publication;
   draftDefinition: Definition;
   publicationDefinition: Definition;
+  draftThumbnail?: Blob;
+  publicationThumbnail?: Blob;
 };
 
 /**
@@ -66,6 +85,11 @@ type Loaded = {
  * the proxy itself exposes. The gateways the proxy is deployed to are read for
  * the Production URL's choices and its default (the first); a failed read only
  * leaves the choices empty.
+ *
+ * The thumbnail comes from the draft if it has one, else from the live listing, by the
+ * `hasThumbnail` flags rather than by whether a read worked: a failed read must not fall
+ * through to the live one, or saving would overwrite the draft's own with it. The live
+ * one is read whenever the listing has it, for the published view.
  *
  * `isLoading` is latched: the page is loading until everything it opens on is
  * ready, and not again for the refetches that follow its own saves.
@@ -107,9 +131,26 @@ export function usePublishPageData(
                 mcpProxiesApis.getMcpProxyApiPortalPublicationDefinition(apiPortalId, serverId, PLATFORM_API_BASE_URL)
               )
             : undefined;
+        const [draftThumbnail, publicationThumbnail] = await Promise.all([
+          readAsset(draft?.hasThumbnail, () =>
+            mcpProxiesApis.getMcpProxyApiPortalDraftThumbnail(apiPortalId, serverId, PLATFORM_API_BASE_URL)
+          ),
+          readAsset(publication?.hasThumbnail, () =>
+            mcpProxiesApis.getMcpProxyApiPortalPublicationThumbnail(apiPortalId, serverId, PLATFORM_API_BASE_URL)
+          ),
+        ]);
         if (cancelled) return;
         setError(undefined);
-        setLoaded({ server, portal, draft, publication, draftDefinition, publicationDefinition });
+        setLoaded({
+          server,
+          portal,
+          draft,
+          publication,
+          draftDefinition,
+          publicationDefinition,
+          draftThumbnail,
+          publicationThumbnail,
+        });
       } catch (loadError) {
         logger.error('Failed to load the MCP publish page:', loadError);
         if (!cancelled) setError(loadError instanceof Error ? loadError : new Error(String(loadError)));
@@ -154,8 +195,14 @@ export function usePublishPageData(
   const seed = useMemo<PublishSeed | undefined>(() => {
     if (!isReady || !loaded) return undefined;
     const definition = loaded.draftDefinition ?? loaded.publicationDefinition ?? (loaded.server.capabilities as Definition);
+    const thumbnail = loaded.draft?.hasThumbnail
+      ? loaded.draftThumbnail
+      : loaded.publication?.hasThumbnail
+        ? loaded.publicationThumbnail
+        : undefined;
     return {
       definitionText: definitionToText(definition),
+      thumbnail: thumbnail && { blob: thumbnail, inDraft: Boolean(loaded.draft?.hasThumbnail) },
       values: resolveDraftFormValues(loaded.draft, loaded.publication, loaded.server, productionUrlOptions[0]?.url),
     };
   }, [isReady, loaded, productionUrlOptions]);
@@ -171,6 +218,7 @@ export function usePublishPageData(
     isLoading: !isReady,
     productionUrlOptions,
     publishedDefinition,
+    publishedThumbnail: loaded?.publicationThumbnail,
     seed,
     refetch,
   };

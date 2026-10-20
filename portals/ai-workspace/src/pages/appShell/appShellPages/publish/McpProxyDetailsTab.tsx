@@ -16,9 +16,10 @@
  * under the License.
  */
 
-import { useState, type MouseEvent } from 'react';
+import { useRef, useState, type ChangeEvent, type MouseEvent } from 'react';
 import { defineMessages, FormattedMessage, useIntl } from 'react-intl';
 import {
+  alpha,
   Autocomplete,
   Avatar,
   Box,
@@ -37,7 +38,7 @@ import {
   Tooltip,
   Typography,
 } from '@wso2/oxygen-ui';
-import { Boxes, ChevronDown, Info, List, SquarePen, X } from '@wso2/oxygen-ui-icons-react';
+import { Boxes, Camera, ChevronDown, Info, List, SquarePen, X } from '@wso2/oxygen-ui-icons-react';
 import {
   nameInitials,
   type DraftFormField,
@@ -94,6 +95,10 @@ const messages = defineMessages({
     id: 'aiWorkspace.pages.appShell.appShellPages.publish.details.agentVisibility',
     defaultMessage: 'Make this MCP proxy discoverable by AI agents',
   },
+  changeThumbnail: {
+    id: 'aiWorkspace.pages.appShell.appShellPages.publish.details.changeThumbnail',
+    defaultMessage: 'Change thumbnail',
+  },
 });
 
 const THUMBNAIL_WIDTH = 72;
@@ -112,8 +117,12 @@ export type McpProxyDetailsTabProps = {
   readOnly?: boolean;
   onBlurField?: (field: DraftFormField) => void;
   onChange?: (values: DraftFormValues) => void;
+  /** Called with the image picked as the new thumbnail; without it the thumbnail is read-only. */
+  onThumbnailPick?: (file: File) => void;
   /** URLs the Production URL can be picked from; any other URL can still be typed. */
   productionUrlOptions?: GatewayUrlOption[];
+  /** The thumbnail to show; the proxy name's monogram stands in without one. */
+  thumbnailUrl?: string;
   values: DraftFormValues;
 };
 
@@ -281,30 +290,99 @@ function UrlField({
   );
 }
 
-/** Placeholder for the proxy's portal thumbnail. It is not editable, uploaded or saved. */
-function ThumbnailPlaceholder({ displayName }: { displayName: string }) {
+type ThumbnailProps = {
+  disabled?: boolean;
+  displayName: string;
+  onPick?: (file: File) => void;
+  url?: string;
+};
+
+/**
+ * The proxy's portal thumbnail (the name's monogram stands in without an image). With
+ * `onPick`, hovering or focusing it offers a replacement picker; the choice is only
+ * reported, not stored.
+ */
+function Thumbnail({ disabled, displayName, onPick, url }: ThumbnailProps) {
+  const intl = useIntl();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const editable = Boolean(onPick) && !disabled;
+
+  const handleFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Cleared so choosing the same file again still fires a change.
+    event.target.value = '';
+    if (file) onPick?.(file);
+  };
+
   return (
-    <Avatar
+    <Box
       sx={{
-        bgcolor: 'primary.light',
-        color: 'primary.contrastText',
         alignSelf: 'stretch',
-        fontSize: THUMBNAIL_FONT_SIZE,
         // Fills the row's height, label to input, less the reserved error line under the input.
-        height: 'auto',
+        display: 'flex',
         mb: ERROR_LINE_HEIGHT,
         minHeight: THUMBNAIL_MIN_HEIGHT,
+        position: 'relative',
         width: THUMBNAIL_WIDTH,
+        '&:hover .thumbnail-overlay, &:focus-within .thumbnail-overlay': { opacity: 1 },
       }}
-      variant="rounded"
     >
-      {nameInitials(displayName) || <Boxes size={THUMBNAIL_ICON_SIZE} />}
-    </Avatar>
+      <Avatar
+        alt={displayName}
+        imgProps={{ style: { objectFit: 'contain' } }}
+        src={url}
+        sx={{
+          bgcolor: url ? 'background.paper' : 'primary.light',
+          color: 'primary.contrastText',
+          fontSize: THUMBNAIL_FONT_SIZE,
+          height: 'auto',
+          width: '100%',
+        }}
+        variant="rounded"
+      >
+        {nameInitials(displayName) || <Boxes size={THUMBNAIL_ICON_SIZE} />}
+      </Avatar>
+      {editable && (
+        <>
+          <Box
+            className="thumbnail-overlay"
+            sx={(theme) => ({
+              alignItems: 'center',
+              bgcolor: alpha(theme.palette.common.black, 0.5),
+              borderRadius: 1,
+              display: 'flex',
+              inset: 0,
+              justifyContent: 'center',
+              opacity: 0,
+              position: 'absolute',
+              transition: 'opacity 150ms ease',
+            })}
+          >
+            <IconButton
+              aria-label={intl.formatMessage(messages.changeThumbnail)}
+              onClick={() => inputRef.current?.click()}
+              size="small"
+              sx={{ color: 'common.white' }}
+            >
+              <Camera size={THUMBNAIL_ICON_SIZE} />
+            </IconButton>
+          </Box>
+          <Box
+            accept="image/png,image/jpeg"
+            component="input"
+            onChange={handleFile}
+            ref={inputRef}
+            sx={{ display: 'none' }}
+            type="file"
+          />
+        </>
+      )}
+    </Box>
   );
 }
 
 /**
- * "MCP Proxy Details": thumbnail placeholder, name, version, description, the two
+ * "MCP Proxy Details": thumbnail, name, version, description, the two
  * endpoint URLs and agent visibility in a single card.
  */
 export function McpProxyDetailsTab({
@@ -312,8 +390,10 @@ export function McpProxyDetailsTab({
   errors = {},
   onBlurField,
   onChange,
+  onThumbnailPick,
   productionUrlOptions = [],
   readOnly,
+  thumbnailUrl,
   values,
 }: McpProxyDetailsTabProps) {
   const intl = useIntl();
@@ -338,7 +418,12 @@ export function McpProxyDetailsTab({
       <Stack spacing={1}>
         <Grid container spacing={2}>
           <Grid size={{ md: 'auto', xs: 12 }} sx={{ display: 'flex' }}>
-            <ThumbnailPlaceholder displayName={values.displayName} />
+            <Thumbnail
+              disabled={disabled}
+              displayName={values.displayName}
+              onPick={readOnly ? undefined : onThumbnailPick}
+              url={thumbnailUrl}
+            />
           </Grid>
           <Grid size={{ md: 'grow', xs: 12 }}>
             <DetailField {...fieldProps('displayName', 'publicationDisplayName', intl.formatMessage(messages.name))} required />

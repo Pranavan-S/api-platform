@@ -29,6 +29,7 @@ import {
   resolveDraftFormValues,
   sameSelection,
   validateDraftFormValues,
+  validateThumbnailFile,
   type DraftFormValues,
 } from './mcpPublishForm';
 import { buildViewInPortalUrl, isListedOnPortal, publicationStatusMeta } from './publicationDisplay';
@@ -157,6 +158,19 @@ describe('sameSelection', () => {
     expect(sameSelection([], [])).toBe(true);
     expect(sameSelection(['a'], ['a', 'b'])).toBe(false);
     expect(sameSelection(['a', 'b'], ['a', 'c'])).toBe(false);
+  });
+});
+
+describe('validateThumbnailFile', () => {
+  it('accepts a JPEG or PNG within the size cap', () => {
+    expect(validateThumbnailFile({ size: 1024, type: 'image/png' })).toBeUndefined();
+    expect(validateThumbnailFile({ size: 2 * 1024 * 1024, type: 'image/jpeg' })).toBeUndefined();
+  });
+
+  it('refuses any other type, and an image over 2 MB', () => {
+    expect(validateThumbnailFile({ size: 1024, type: 'image/gif' })).toBe(publishFormMessages.thumbnailType);
+    expect(validateThumbnailFile({ size: 1024, type: '' })).toBe(publishFormMessages.thumbnailType);
+    expect(validateThumbnailFile({ size: 2 * 1024 * 1024 + 1, type: 'image/png' })).toBe(publishFormMessages.thumbnailSize);
   });
 });
 

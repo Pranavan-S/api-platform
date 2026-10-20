@@ -38,6 +38,7 @@ vi.mock('../../../../apis/MCP/mcpProxiesApis', () => ({
     publishSavedMcpProxyDraft: vi.fn(),
     unpublishMcpProxyFromApiPortal: vi.fn(),
     deprecateMcpProxyOnApiPortal: vi.fn(),
+    saveMcpProxyApiPortalDraftThumbnail: vi.fn(),
   },
 }));
 vi.mock('./usePublishPageData', () => ({ usePublishPageData: () => mocks.data }));
@@ -125,6 +126,8 @@ beforeEach(() => {
   mocks.showSnackbar.mockReset();
   mocks.refetch.mockReset();
   mocks.documents = { documents: undefined, failed: false };
+  URL.createObjectURL = vi.fn(() => 'blob:thumbnail');
+  URL.revokeObjectURL = vi.fn();
   Object.values(api).forEach((fn) => fn.mockReset().mockResolvedValue(undefined as never));
   setData();
 });
@@ -239,6 +242,98 @@ describe('the Documentation tab', () => {
     expect(screen.getByText('FAQ')).toBeInTheDocument();
     expect(screen.queryByText('Quickstart')).not.toBeInTheDocument();
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  });
+});
+
+describe('the thumbnail', () => {
+  const stored = new Blob(['stored'], { type: 'image/png' });
+  const png = () => new File(['png'], 'logo.png', { type: 'image/png' });
+  const thumbnailInput = (container: HTMLElement) => container.querySelector<HTMLInputElement>('input[type="file"]')!;
+
+  it('shows the thumbnail the listing already has in place of the monogram', () => {
+    setData({ seed: { definitionText: DEFINITION, thumbnail: { blob: stored, inDraft: true }, values: VALUES } });
+    open();
+    expect(screen.getByRole('img', { name: 'Travel MCP' })).toHaveAttribute('src', 'blob:thumbnail');
+    expect(screen.queryByText('TR')).not.toBeInTheDocument();
+  });
+
+  it('counts a picked image as an edit and uploads it after the details and the capabilities', async () => {
+    const { container, user } = open();
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled();
+    const image = png();
+    await user.upload(thumbnailInput(container), image);
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+
+    await waitFor(() => expect(mocks.showSnackbar).toHaveBeenCalledWith('Draft saved.', 'success'));
+    expect(api.saveMcpProxyApiPortalDraftThumbnail).toHaveBeenCalledWith('hub-1', 'travel', image, expect.any(String));
+    const [saveDetails, saveDefinition, saveThumbnail] = calls(
+      api.saveMcpProxyApiPortalDraft,
+      api.saveMcpProxyApiPortalDraftDefinition,
+      api.saveMcpProxyApiPortalDraftThumbnail
+    );
+    expect(saveDetails).toBeLessThan(saveDefinition);
+    expect(saveDefinition).toBeLessThan(saveThumbnail);
+  });
+
+  it('uploads the picked image before publishing, and does not publish without it', async () => {
+    api.saveMcpProxyApiPortalDraftThumbnail.mockRejectedValue(httpError());
+    const { container, user } = open();
+    await user.upload(thumbnailInput(container), png());
+    await user.click(mainButton());
+
+    await waitFor(() => expect(mocks.showSnackbar).toHaveBeenCalledWith('Server said no.', 'error'));
+    expect(api.publishSavedMcpProxyDraft).not.toHaveBeenCalled();
+  });
+
+  it('puts the last saved image back when the server refuses the new one', async () => {
+    api.saveMcpProxyApiPortalDraftThumbnail.mockRejectedValue(httpError());
+    setData({ seed: { definitionText: DEFINITION, thumbnail: { blob: stored, inDraft: true }, values: VALUES } });
+    const { container, user } = open();
+    await user.upload(thumbnailInput(container), png());
+    await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+
+    await waitFor(() => expect(mocks.showSnackbar).toHaveBeenCalledWith('Server said no.', 'error'));
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled();
+  });
+
+  it('does not send a thumbnail the draft already stores', async () => {
+    setData({ seed: { definitionText: DEFINITION, thumbnail: { blob: stored, inDraft: true }, values: VALUES } });
+    const { user } = open();
+    await user.type(screen.getByRole('textbox', { name: /^Version/ }), '2');
+    await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+
+    await waitFor(() => expect(mocks.showSnackbar).toHaveBeenCalledWith('Draft saved.', 'success'));
+    expect(api.saveMcpProxyApiPortalDraftThumbnail).not.toHaveBeenCalled();
+  });
+
+  it('sends a thumbnail that was only pre-filled from the live listing, so the draft can publish it', async () => {
+    setData({ seed: { definitionText: DEFINITION, thumbnail: { blob: stored, inDraft: false }, values: VALUES } });
+    const { user } = open();
+    await user.type(screen.getByRole('textbox', { name: /^Version/ }), '2');
+    await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+
+    await waitFor(() =>
+      expect(api.saveMcpProxyApiPortalDraftThumbnail).toHaveBeenCalledWith('hub-1', 'travel', stored, expect.any(String))
+    );
+  });
+
+  it('refuses an image the server would, without changing anything', async () => {
+    const { container } = open();
+    // The picker's own accept filter is bypassed here, as a renamed file would.
+    fireEvent.change(thumbnailInput(container), {
+      target: { files: [new File(['gif'], 'logo.gif', { type: 'image/gif' })] },
+    });
+
+    expect(mocks.showSnackbar).toHaveBeenCalledWith('Only JPEG and PNG images are supported.', 'error');
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled();
+  });
+
+  it('shows the live thumbnail read only', () => {
+    setData({ publication: LIVE, publishedThumbnail: stored });
+    open();
+    expect(screen.getByRole('img', { name: 'Travel MCP' })).toHaveAttribute('src', 'blob:thumbnail');
+    expect(screen.queryByRole('button', { name: 'Change thumbnail' })).not.toBeInTheDocument();
   });
 });
 

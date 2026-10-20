@@ -136,4 +136,36 @@ describe('McpProxyDetailsTab', () => {
     expect(screen.getByLabelText(/Name/)).toBeDisabled();
     expect(screen.getByLabelText(DISCOVERABLE)).toBeDisabled();
   });
+
+  it('shows the thumbnail image in place of the monogram when there is one', () => {
+    renderWithProviders(<Harness thumbnailUrl="blob:test/1" />);
+    expect(screen.getByRole('img', { name: 'Travel MCP' })).toHaveAttribute('src', 'blob:test/1');
+    expect(screen.queryByText('TR')).not.toBeInTheDocument();
+  });
+
+  it('reports the image picked to replace the thumbnail, and lets the same one be picked again', async () => {
+    const onThumbnailPick = vi.fn();
+    const { container, user } = renderWithProviders(<Harness onThumbnailPick={onThumbnailPick} />);
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const image = new File(['png'], 'logo.png', { type: 'image/png' });
+
+    expect(screen.getByRole('button', { name: 'Change thumbnail' })).toBeInTheDocument();
+    expect(input).toHaveAttribute('accept', 'image/png,image/jpeg');
+
+    await user.upload(input, image);
+    expect(onThumbnailPick).toHaveBeenLastCalledWith(image);
+    expect(input.value).toBe('');
+  });
+
+  it('does not offer to change the thumbnail when it is read-only, disabled or has no handler', () => {
+    const onThumbnailPick = vi.fn();
+    const { rerender } = renderWithProviders(<McpProxyDetailsTab onThumbnailPick={onThumbnailPick} readOnly values={VALUES} />);
+    expect(screen.queryByRole('button', { name: 'Change thumbnail' })).not.toBeInTheDocument();
+
+    rerender(<McpProxyDetailsTab disabled onThumbnailPick={onThumbnailPick} values={VALUES} />);
+    expect(screen.queryByRole('button', { name: 'Change thumbnail' })).not.toBeInTheDocument();
+
+    rerender(<McpProxyDetailsTab values={VALUES} />);
+    expect(screen.queryByRole('button', { name: 'Change thumbnail' })).not.toBeInTheDocument();
+  });
 });
