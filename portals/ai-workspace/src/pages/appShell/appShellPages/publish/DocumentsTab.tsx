@@ -16,14 +16,14 @@
  * under the License.
  */
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { defineMessages, FormattedMessage, useIntl } from 'react-intl';
 import {
   alpha,
   Box,
   Button,
   Checkbox,
-  Chip,
+  Collapse,
   Divider,
   Drawer,
   IconButton,
@@ -36,6 +36,8 @@ import {
 } from '@wso2/oxygen-ui';
 import { FileSearch, FileText, Minus, Plus, X } from '@wso2/oxygen-ui-icons-react';
 import type { MCPProxyDocument } from '../../../../utils/types';
+import { DocumentGroupHeader } from './DocumentGroupHeader';
+import { groupDocumentsByType } from './documentGroups';
 import { DocumentPreview } from './DocumentPreview';
 import type { DraftFormValues } from './mcpPublishForm';
 import { EmptyState, ErrorState, LoadingState } from './PublishStates';
@@ -102,23 +104,6 @@ const messages = defineMessages({
   },
 });
 
-const typeMessages = defineMessages({
-  HowTo: { id: 'aiWorkspace.pages.appShell.appShellPages.publish.documents.type.howTo', defaultMessage: 'How To' },
-  Samples: {
-    id: 'aiWorkspace.pages.appShell.appShellPages.publish.documents.type.samples',
-    defaultMessage: 'Samples & SDK',
-  },
-  PublicForum: {
-    id: 'aiWorkspace.pages.appShell.appShellPages.publish.documents.type.publicForum',
-    defaultMessage: 'Public Forum',
-  },
-  SupportForum: {
-    id: 'aiWorkspace.pages.appShell.appShellPages.publish.documents.type.supportForum',
-    defaultMessage: 'Support Forum',
-  },
-  Other: { id: 'aiWorkspace.pages.appShell.appShellPages.publish.documents.type.other', defaultMessage: 'Other' },
-});
-
 const PREVIEW_WIDTH = 520;
 
 export type DocumentsTabProps = {
@@ -144,6 +129,8 @@ export type DocumentsTabProps = {
 export function DocumentsTab({ disabled, documents, failed, mcpProxyId, onChange, readOnly, values }: DocumentsTabProps) {
   const intl = useIntl();
   const [previewId, setPreviewId] = useState<string>();
+  // Collapsed groups, by type.
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
 
   if (failed) return <ErrorState message={intl.formatMessage(messages.error)} />;
   if (!documents) return <LoadingState label={intl.formatMessage(messages.loading)} />;
@@ -161,6 +148,7 @@ export function DocumentsTab({ disabled, documents, failed, mcpProxyId, onChange
     );
   }
 
+  const groups = groupDocumentsByType(shown, intl);
   const selectedCount = documents.filter((doc) => selected.has(doc.id)).length;
   const allSelected = selectedCount === documents.length;
   const previewed = documents.find((doc) => doc.id === previewId);
@@ -171,6 +159,14 @@ export function DocumentsTab({ disabled, documents, failed, mcpProxyId, onChange
     commitSelection(selected.has(docId) ? values.docIds.filter((id) => id !== docId) : [...values.docIds, docId]);
 
   const toggleAll = () => commitSelection(allSelected ? [] : documents.map((doc) => doc.id));
+
+  const toggleGroup = (type: string) =>
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
 
   const countSx = { color: readOnly ? 'success.main' : 'primary.main', fontSize: 20, fontWeight: 500 } as const;
 
@@ -212,17 +208,34 @@ export function DocumentsTab({ disabled, documents, failed, mcpProxyId, onChange
       </Box>
 
       <List dense disablePadding>
-        {shown.map((doc) => (
-          <DocumentRow
-            disabled={disabled}
-            doc={doc}
-            key={doc.id}
-            onPreview={() => setPreviewId(doc.id)}
-            onToggle={() => toggle(doc.id)}
-            readOnly={readOnly}
-            selected={selected.has(doc.id)}
-          />
-        ))}
+        {groups.map((group, groupIndex) => {
+          const open = !collapsed.has(group.type);
+          return (
+            <Fragment key={group.type}>
+              <DocumentGroupHeader
+                controlsId={`document-group-\${group.type}`}
+                count={group.items.length}
+                first={groupIndex === 0}
+                label={group.label}
+                onToggle={() => toggleGroup(group.type)}
+                open={open}
+              />
+              <Collapse id={`document-group-\${group.type}`} in={open} timeout="auto">
+                {group.items.map((doc) => (
+                  <DocumentRow
+                    disabled={disabled}
+                    doc={doc}
+                    key={doc.id}
+                    onPreview={() => setPreviewId(doc.id)}
+                    onToggle={() => toggle(doc.id)}
+                    readOnly={readOnly}
+                    selected={selected.has(doc.id)}
+                  />
+                ))}
+              </Collapse>
+            </Fragment>
+          );
+        })}
       </List>
 
       <Drawer
@@ -279,13 +292,6 @@ type DocumentRowProps = {
   selected: boolean;
 };
 
-/** A document's type as a reader knows it; a custom type is shown as typed. */
-function DocumentType({ type }: { type: string }) {
-  const intl = useIntl();
-  const known = typeMessages[type as keyof typeof typeMessages];
-  return <Chip label={known ? intl.formatMessage(known) : type} size="small" sx={{ typography: 'caption' }} />;
-}
-
 /** One document: its checkbox, name and type, and a button that opens its content. */
 function DocumentRow({ disabled, doc, onPreview, onToggle, readOnly, selected }: DocumentRowProps) {
   const intl = useIntl();
@@ -296,7 +302,6 @@ function DocumentRow({ disabled, doc, onPreview, onToggle, readOnly, selected }:
           <FileText size={16} />
         </ListItemIcon>
         <ListItemText primary={doc.displayName} slotProps={{ primary: { noWrap: true } }} />
-        <DocumentType type={doc.type} />
       </ListItem>
     );
   }
@@ -319,7 +324,6 @@ function DocumentRow({ disabled, doc, onPreview, onToggle, readOnly, selected }:
         slotProps={{ input: { 'aria-label': doc.displayName } }}
       />
       <ListItemText primary={doc.displayName} slotProps={{ primary: { noWrap: true } }} sx={{ flex: 1, minWidth: 0 }} />
-      <DocumentType type={doc.type} />
       <Button
         aria-label={intl.formatMessage(messages.previewDocument, { name: doc.displayName })}
         onClick={onPreview}

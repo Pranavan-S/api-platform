@@ -18,7 +18,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mcpProxiesApis } from '../../../../apis/MCP/mcpProxiesApis';
-import { renderWithProviders, screen, within } from '../../../../test/utils';
+import { renderWithProviders, screen, waitFor, within } from '../../../../test/utils';
 import type { MCPProxyDocument } from '../../../../utils/types';
 import { DocumentsTab } from './DocumentsTab';
 import { emptyDraftFormValues, type DraftFormValues } from './mcpPublishForm';
@@ -55,15 +55,34 @@ describe('DocumentsTab', () => {
     expect(screen.getByText('This MCP proxy has no documents to choose from.')).toBeInTheDocument();
   });
 
-  it('lists every document with its type, ticking the selected ones', () => {
+  it('groups the documents by type, each group with its count', () => {
+    renderWithProviders(<DocumentsTab documents={documents} mcpProxyId="travel" values={withDocs([])} />);
+    expect(screen.getByRole('button', { name: 'How To (1)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Samples & SDK (1)' })).toBeInTheDocument();
+    // A custom type is named as typed.
+    expect(screen.getByRole('button', { name: 'Frequently asked (1)' })).toBeInTheDocument();
+  });
+
+  it('shows which documents are selected, and how many of the total', () => {
     renderWithProviders(<DocumentsTab documents={documents} mcpProxyId="travel" values={withDocs(['sdk'])} />);
     expect(screen.getByRole('checkbox', { name: 'Quickstart' })).not.toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'Client SDK' })).toBeChecked();
-    expect(screen.getByText('How To')).toBeInTheDocument();
-    expect(screen.getByText('Samples & SDK')).toBeInTheDocument();
-    // A custom type is shown as typed.
-    expect(screen.getByText('Frequently asked')).toBeInTheDocument();
     expect(screen.getByText('of 3 documents selected', { exact: false })).toBeInTheDocument();
+  });
+
+  it('collapses a group without changing the selection', async () => {
+    const onChange = vi.fn();
+    const { user } = renderWithProviders(
+      <DocumentsTab documents={documents} mcpProxyId="travel" onChange={onChange} values={withDocs([])} />
+    );
+    const header = screen.getByRole('button', { name: 'Samples & SDK (1)' });
+    expect(header).toHaveAttribute('aria-expanded', 'true');
+    await user.click(header);
+
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+    await waitFor(() => expect(screen.queryByRole('checkbox', { name: 'Client SDK' })).not.toBeInTheDocument());
+    expect(screen.getByRole('checkbox', { name: 'Quickstart' })).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it('adds and removes a document from the selection', async () => {
@@ -131,6 +150,7 @@ describe('DocumentsTab', () => {
     it('lists only the documents the live listing holds, with no controls', () => {
       renderWithProviders(<DocumentsTab documents={documents} mcpProxyId="travel" readOnly values={withDocs(['sdk'])} />);
       expect(screen.getByText('Client SDK')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Samples & SDK (1)' })).toBeInTheDocument();
       expect(screen.queryByText('Quickstart')).not.toBeInTheDocument();
       expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /Preview/ })).not.toBeInTheDocument();
