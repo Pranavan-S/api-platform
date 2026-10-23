@@ -45,7 +45,7 @@ func (alwaysSucceedsPortalPublisher) Publish(_ context.Context, _ *model.APIPort
 	return nil
 }
 
-func (alwaysSucceedsPortalPublisher) Unpublish(_ context.Context, _ *model.APIPortal, _ string) error {
+func (alwaysSucceedsPortalPublisher) Unpublish(_ context.Context, _ *model.APIPortal, _, _ string) error {
 	return nil
 }
 
@@ -57,7 +57,7 @@ func (alwaysSucceedsPortalPublisher) Deprecate(_ context.Context, _ *model.APIPo
 	return nil
 }
 
-func (alwaysSucceedsPortalPublisher) PublishContent(_ context.Context, _ *model.APIPortal, _ string, _ *service.PortalContent) error {
+func (alwaysSucceedsPortalPublisher) PublishContent(_ context.Context, _ *model.APIPortal, _, _ string, _ *service.PortalContent) error {
 	return nil
 }
 
@@ -605,7 +605,7 @@ func (unpublishConflictPublisher) Publish(_ context.Context, _ *model.APIPortal,
 	return nil
 }
 
-func (unpublishConflictPublisher) Unpublish(_ context.Context, _ *model.APIPortal, _ string) error {
+func (unpublishConflictPublisher) Unpublish(_ context.Context, _ *model.APIPortal, _, _ string) error {
 	return &service.PortalConflictError{Message: "active consumers still attached"}
 }
 
@@ -617,7 +617,7 @@ func (unpublishConflictPublisher) Deprecate(_ context.Context, _ *model.APIPorta
 	return nil
 }
 
-func (unpublishConflictPublisher) PublishContent(_ context.Context, _ *model.APIPortal, _ string, _ *service.PortalContent) error {
+func (unpublishConflictPublisher) PublishContent(_ context.Context, _ *model.APIPortal, _, _ string, _ *service.PortalContent) error {
 	return nil
 }
 
@@ -679,7 +679,7 @@ func (unpublishSubscriptionConflictPublisher) Publish(_ context.Context, _ *mode
 	return nil
 }
 
-func (unpublishSubscriptionConflictPublisher) Unpublish(_ context.Context, _ *model.APIPortal, _ string) error {
+func (unpublishSubscriptionConflictPublisher) Unpublish(_ context.Context, _ *model.APIPortal, _, _ string) error {
 	return &service.PortalConflictError{
 		Message: "the API Portal rejected removal of this listing (status 409)",
 		Reason:  "active subscriptions are removed",
@@ -694,7 +694,7 @@ func (unpublishSubscriptionConflictPublisher) Deprecate(_ context.Context, _ *mo
 	return nil
 }
 
-func (unpublishSubscriptionConflictPublisher) PublishContent(_ context.Context, _ *model.APIPortal, _ string, _ *service.PortalContent) error {
+func (unpublishSubscriptionConflictPublisher) PublishContent(_ context.Context, _ *model.APIPortal, _, _ string, _ *service.PortalContent) error {
 	return nil
 }
 
@@ -744,7 +744,7 @@ type contentRecorder struct {
 	archive []byte
 }
 
-func (c *contentRecorder) PublishContent(_ context.Context, _ *model.APIPortal, _ string, content *service.PortalContent) error {
+func (c *contentRecorder) PublishContent(_ context.Context, _ *model.APIPortal, _, _ string, content *service.PortalContent) error {
 	c.archive = content.Archive
 	return nil
 }

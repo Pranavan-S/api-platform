@@ -35,20 +35,20 @@ type PortalPublisher interface {
 	// any other error is treated as unavailable (503 PUBLICATION_PORTAL_UNAVAILABLE).
 	Publish(ctx context.Context, portal *model.APIPortal, apiType, apiHandle string, pub *model.Publication, definition *model.PublicationContent) error
 
-	// Unpublish removes apiHandle's listing from portal. A nil error means the
+	// Unpublish removes apiHandle's listing, of apiType, from portal. A nil error means the
 	// portal no longer carries the listing, including when it was already gone.
 	// Errors follow the same contract as Publish.
-	Unpublish(ctx context.Context, portal *model.APIPortal, apiHandle string) error
+	Unpublish(ctx context.Context, portal *model.APIPortal, apiType, apiHandle string) error
 
 	// CreateMissingPlans creates on portal the plans it does not already have,
 	// matched by exact handle; plans it already has are left untouched. Errors
 	// follow the same contract as Publish.
 	CreateMissingPlans(ctx context.Context, portal *model.APIPortal, plans []*model.SubscriptionPlan) error
 
-	// PublishContent adds the files in content to apiHandle's listing on portal, replacing
-	// any with the same path; nothing else is removed. Errors follow the same contract as
-	// Publish.
-	PublishContent(ctx context.Context, portal *model.APIPortal, apiHandle string, content *PortalContent) error
+	// PublishContent adds the files in content to apiHandle's listing, of apiType, on portal,
+	// replacing any with the same path; nothing else is removed. Errors follow the same
+	// contract as Publish.
+	PublishContent(ctx context.Context, portal *model.APIPortal, apiType, apiHandle string, content *PortalContent) error
 
 	// Deprecate marks apiHandle's listing on portal as deprecated, re-sending live
 	// with only the status changed. Errors follow the same contract as Publish.
