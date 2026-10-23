@@ -24,6 +24,7 @@ import { SCOPES } from '../../../../auth/permissions';
 import { useAppAuth } from '../../../../contexts/AppAuthContext';
 import useAIWorkspaceSnackbar from '../../../../hooks/aiWorkspaceSnackbar';
 import { useMcpDeployedGateways } from '../../../../hooks/useMcpDeployedGateways';
+import { useMcpProxyDocuments } from '../../../../hooks/useMcpProxyDocuments';
 import { useSubscriptionPlans } from '../../../../hooks/useSubscriptionPlans';
 import { renderWithProviders, screen, waitFor, within } from '../../../../test/utils';
 import McpPublishHubPage from './McpPublishHubPage';
@@ -46,6 +47,7 @@ vi.mock('../../../../apis/MCP/mcpProxiesApis', () => ({
 vi.mock('../../../../contexts/AppAuthContext', () => ({ useAppAuth: vi.fn() }));
 vi.mock('../../../../hooks/aiWorkspaceSnackbar', () => ({ default: vi.fn() }));
 vi.mock('../../../../hooks/useMcpDeployedGateways', () => ({ useMcpDeployedGateways: vi.fn() }));
+vi.mock('../../../../hooks/useMcpProxyDocuments', () => ({ useMcpProxyDocuments: vi.fn() }));
 vi.mock('../../../../hooks/useSubscriptionPlans', () => ({ useSubscriptionPlans: vi.fn() }));
 vi.mock('../../../../hooks/useFillScrollArea', () => ({
   useFillScrollArea: () => ({ height: undefined, ref: () => undefined }),
@@ -129,6 +131,9 @@ const ALL_SCOPES = [
 
 const plansAre = (plans: unknown[]) => vi.mocked(useSubscriptionPlans).mockReturnValue({ plans, failed: false } as never);
 
+const documentsAre = (documents: unknown[]) =>
+  vi.mocked(useMcpProxyDocuments).mockReturnValue({ documents, failed: false } as never);
+
 const renderPage = async () => {
   const view = renderWithProviders(<McpPublishHubPage />, {
     path: '/publish/:serverId/portals/:apiPortalId',
@@ -156,6 +161,7 @@ beforeEach(() => {
   vi.mocked(useAIWorkspaceSnackbar).mockReturnValue(showSnackbar as never);
   vi.mocked(useMcpDeployedGateways).mockReturnValue({ gateways: [gateway], isLoading: false } as never);
   plansAre([]);
+  documentsAre([]);
   youMay(...ALL_SCOPES);
   apiHolds();
 });
@@ -440,6 +446,62 @@ describe('McpPublishHubPage', () => {
     });
   });
 
+  describe('documentation', () => {
+    const setup = { id: 'setup', type: 'HowTo', displayName: 'Setup guide' };
+    const faq = { id: 'faq', type: 'Other', displayName: 'FAQ list' };
+
+    it('saves the selection with the draft', async () => {
+      documentsAre([setup, faq]);
+      const { user } = await renderPage();
+      await user.click(screen.getByRole('tab', { name: 'Documentation' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Setup guide' }));
+
+      await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+
+      await waitFor(() =>
+        expect(api.saveMcpProxyApiPortalDraft).toHaveBeenCalledWith(
+          'main',
+          'travel',
+          expect.objectContaining({ docIds: ['setup'] }),
+          expect.any(String)
+        )
+      );
+    });
+
+    it('only reads the documents once their tab is open or a selection needs checking', async () => {
+      const { user } = await renderPage();
+      expect(useMcpProxyDocuments).toHaveBeenLastCalledWith('travel', false);
+
+      await user.click(screen.getByRole('tab', { name: 'Documentation' }));
+
+      expect(useMcpProxyDocuments).toHaveBeenLastCalledWith('travel', true);
+    });
+
+    it('drops a selected document that no longer exists, and says so', async () => {
+      apiHolds({ draft: { ...draft, docIds: ['setup', 'deleted'] } });
+      documentsAre([setup]);
+
+      await renderPage();
+
+      await waitFor(() =>
+        expect(showSnackbar).toHaveBeenCalledWith(
+          'A selected document no longer exists and was removed from the selection.',
+          'warning'
+        )
+      );
+    });
+
+    it('does not count the removal of a vanished document as an edit to save', async () => {
+      apiHolds({ draft: { ...draft, docIds: ['setup', 'deleted'] } });
+      documentsAre([setup]);
+
+      await renderPage();
+      await waitFor(() => expect(showSnackbar).toHaveBeenCalled());
+
+      expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled();
+    });
+  });
+
   describe('once the proxy is live on the hub', () => {
     beforeEach(() => {
       apiHolds({
@@ -482,6 +544,25 @@ describe('McpPublishHubPage', () => {
       await user.click(screen.getByRole('tab', { name: 'Capabilities' }));
 
       expect(await screen.findByText('Total: 2')).toBeInTheDocument();
+      expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    });
+
+    it('lists only the documents the live listing holds under Documentation', async () => {
+      apiHolds({
+        draft: { ...draft, docIds: ['setup', 'faq'] },
+        publication: { ...live, docIds: ['faq'] },
+        liveDefinition: { tools: [search], resources: [], prompts: [] },
+      });
+      documentsAre([
+        { id: 'setup', type: 'HowTo', displayName: 'Setup guide' },
+        { id: 'faq', type: 'Other', displayName: 'FAQ list' },
+      ]);
+      const { user } = await renderPage();
+
+      await user.click(screen.getByRole('tab', { name: 'Documentation' }));
+
+      expect(screen.getByText('FAQ list')).toBeInTheDocument();
+      expect(screen.queryByText('Setup guide')).not.toBeInTheDocument();
       expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     });
 

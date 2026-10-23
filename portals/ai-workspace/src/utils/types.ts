@@ -1209,6 +1209,26 @@ export interface PublicationSummaryResponse {
   pagination: Pagination;
 }
 
+/** One document of an MCP proxy (schema `APIDocumentMetadata`); `id` is the handle `docIds` carries. */
+export interface MCPProxyDocument {
+  id: string;
+  type: string;
+  displayName: string;
+  fileName?: string;
+  contentType?: string;
+}
+
+/** A document's body, with the content type it was stored under. */
+export interface MCPProxyDocumentContent {
+  contentType: string;
+  text: string;
+}
+
+export interface MCPProxyDocumentListResponse {
+  list: MCPProxyDocument[];
+  pagination: Pagination;
+}
+
 /** One throttling limit of a subscription plan (schema `SubscriptionPlanLimit`). */
 export interface SubscriptionPlanLimit {
   limitType?: 'REQUEST_COUNT' | 'BANDWIDTH' | 'TOTAL_TOKEN_COUNT';

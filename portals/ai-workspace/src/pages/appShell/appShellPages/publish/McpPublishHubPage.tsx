@@ -30,6 +30,7 @@ import { formatRelativeTime } from '../../../../contexts/llmProvider';
 import useAIWorkspaceSnackbar from '../../../../hooks/aiWorkspaceSnackbar';
 import { useFillScrollArea } from '../../../../hooks/useFillScrollArea';
 import { useFrozenWhile } from '../../../../hooks/useFrozenWhile';
+import { useMcpProxyDocuments } from '../../../../hooks/useMcpProxyDocuments';
 import { usePublishProject } from '../../../../hooks/usePublishProject';
 import { useSubscriptionPlans } from '../../../../hooks/useSubscriptionPlans';
 import { PLATFORM_API_BASE_URL } from '../../../../paths';
@@ -38,6 +39,7 @@ import { getErrorCode, getErrorMessage } from '../../../../utils/apiError';
 import { AppPage } from './AppPage';
 import { CapabilitiesTab, type CapabilitiesTabProps } from './CapabilitiesTab';
 import { ConfirmDialog } from './ConfirmDialog';
+import { DocumentsTab } from './DocumentsTab';
 import { McpProxyDetailsTab } from './McpProxyDetailsTab';
 import {
   definitionToText,
@@ -116,6 +118,10 @@ const messages = defineMessages({
     description:
       'Warning when Save Draft or Publish is blocked because the selection still holds inactive plans. {names} is a comma-separated list of plan names.',
   },
+  removedDocuments: {
+    id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.removedDocuments',
+    defaultMessage: 'A selected document no longer exists and was removed from the selection.',
+  },
   edited: {
     id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.edited',
     defaultMessage: 'Edited {time}',
@@ -147,6 +153,10 @@ const messages = defineMessages({
   tabPlans: {
     id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.tabPlans',
     defaultMessage: 'Subscription Plans',
+  },
+  tabDocuments: {
+    id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.tabDocuments',
+    defaultMessage: 'Documentation',
   },
   typeToConfirm: {
     id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.typeToConfirm',
@@ -199,7 +209,7 @@ const ACTION_BAR_HEIGHT = 40;
 /** The fields that show a validation message. */
 const FORM_FIELDS: DraftFormField[] = ['displayName', 'version', 'productionUrl', 'sandboxUrl'];
 
-type PublishTab = 'details' | 'capabilities' | 'subscriptionPlans';
+type PublishTab = 'details' | 'capabilities' | 'subscriptionPlans' | 'documentations';
 
 /** Which action is currently in flight, so the right button (and only that one) shows busy. */
 type PendingAction = 'idle' | 'saving' | 'publishing' | 'unpublishing' | 'deprecating';
@@ -233,7 +243,7 @@ const bold = (text: ReactNode) => (
 
 /**
  * The publish/unpublish/deprecate flow for one MCP proxy on one MCP Hub: "MCP Proxy
- * Details", "Capabilities" and "Subscription Plans" tabs over a draft/published
+ * Details", "Capabilities", "Subscription Plans" and "Documentation" tabs over a draft/published
  * switch, with Save Draft and a split Publish button beneath.
  *
  * Save Draft always writes `.../draft`, and writes `.../draft/definition` too only
@@ -279,6 +289,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
 
   // Read once its tab is open, or a selection is held to check it against.
   const plans = useSubscriptionPlans(tab === 'subscriptionPlans' || values.subscriptionPlanIds.length > 0);
+  const documents = useMcpProxyDocuments(serverId, tab === 'documentations' || values.docIds.length > 0);
 
   // Seeds the editor once, when everything has settled (success or the expected
   // 404), so a later refetch can't overwrite edits in progress.
@@ -305,6 +316,19 @@ export default function McpPublishHubPage(): React.JSX.Element {
     setSaved((current) => ({ ...current, values: withoutUnknown(current.values) }));
     showSnackbar(intl.formatMessage(messages.removedPlans), 'warning');
   }, [initialized, plans.plans, values.subscriptionPlanIds, intl, showSnackbar]);
+
+  // A document deleted elsewhere has no checkbox to clear but would still be submitted, so drop it and say so.
+  useEffect(() => {
+    if (!initialized || !documents.documents) return;
+    const known = new Set(documents.documents.map((doc) => doc.id));
+    const isKnown = (id: string) => known.has(id);
+    if (values.docIds.every(isKnown)) return;
+    const withoutUnknown = (current: DraftFormValues) => ({ ...current, docIds: current.docIds.filter(isKnown) });
+    setValues(withoutUnknown);
+    // The server dropped it from the saved draft too, so this isn't an edit to save.
+    setSaved((current) => ({ ...current, values: withoutUnknown(current.values) }));
+    showSnackbar(intl.formatMessage(messages.removedDocuments), 'warning');
+  }, [initialized, documents.documents, values.docIds, intl, showSnackbar]);
 
   /** What to tell the user about a failed call; a vanished draft gets a clearer message than the server's. */
   const describeFailure = (error: unknown, fallback: string): string =>
@@ -519,6 +543,15 @@ export default function McpPublishHubPage(): React.JSX.Element {
       if (tab === 'subscriptionPlans') {
         return <SubscriptionPlansTab failed={plans.failed} plans={plans.plans} readOnly values={publishedValues} />;
       }
+      if (tab === 'documentations') {
+        return <DocumentsTab
+            documents={documents.documents}
+            failed={documents.failed}
+            mcpProxyId={serverId}
+            readOnly
+            values={publishedValues}
+          />;
+      }
       if (tab === 'details') return <McpProxyDetailsTab readOnly values={publishedValues} />;
       if (data.publishedDefinition.isLoading) {
         return <LoadingState label={intl.formatMessage(messages.loadingPublishedSpec)} />;
@@ -537,6 +570,18 @@ export default function McpPublishHubPage(): React.JSX.Element {
           onChange={handleChange}
           plans={plans.plans}
           savedPlanIds={savedPlanIds}
+          values={values}
+        />
+      );
+    }
+    if (tab === 'documentations') {
+      return (
+        <DocumentsTab
+          disabled={pendingAction !== 'idle'}
+          documents={documents.documents}
+          failed={documents.failed}
+          mcpProxyId={serverId}
+          onChange={handleChange}
           values={values}
         />
       );
@@ -608,6 +653,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
               <Tab label={intl.formatMessage(messages.tabDetails)} value="details" />
               <Tab label={intl.formatMessage(messages.tabCapabilities)} value="capabilities" />
               <Tab label={intl.formatMessage(messages.tabPlans)} value="subscriptionPlans" />
+              <Tab label={intl.formatMessage(messages.tabDocuments)} value="documentations" />
             </Tabs>
             <PublicationVersionToggle
               disabled={pendingAction !== 'idle'}

@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { get, post, put, del } from '../../clients/choreoApiClient';
+import { get, getText, post, put, putText, del } from '../../clients/choreoApiClient';
 import { logger } from '../../utils/logger';
 import { BFF_API_BASE_URL } from '../../paths';
 
@@ -29,6 +29,9 @@ import type {
   PublicationDraftDetails,
   PublicationDraftDetailsInput,
   PublicationSummaryResponse,
+  MCPProxyDocument,
+  MCPProxyDocumentContent,
+  MCPProxyDocumentListResponse,
 } from '../../utils/types';
 
 // ============================================================================
@@ -340,6 +343,67 @@ export async function deprecateMcpProxyOnApiPortal(
   return post<Publication>(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/deprecate'), undefined, baseUrl);
 }
 
+/** The draft's landing page as Markdown; 404 when it has none (`hasLandingPage`). */
+export async function getMcpProxyApiPortalDraftLandingPage(
+  apiPortalId: string,
+  mcpProxyId: string,
+  baseUrl: string
+): Promise<string> {
+  return (await getText(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/draft/landing-page'), baseUrl)).text;
+}
+
+/** Create or replace the draft's landing page. The draft must already exist or the call is a 404. */
+export async function saveMcpProxyApiPortalDraftLandingPage(
+  apiPortalId: string,
+  mcpProxyId: string,
+  markdown: string,
+  baseUrl: string
+): Promise<void> {
+  await putText(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/draft/landing-page'), markdown, 'text/markdown', baseUrl);
+}
+
+/** The landing page on the live listing as Markdown; 404 when it has none (`hasLandingPage`). */
+export async function getMcpProxyApiPortalPublicationLandingPage(
+  apiPortalId: string,
+  mcpProxyId: string,
+  baseUrl: string
+): Promise<string> {
+  return (await getText(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/publication/landing-page'), baseUrl)).text;
+}
+
+/** The server's maximum page size for a document list. */
+const DOCUMENTS_PAGE_SIZE = 100;
+
+/**
+ * Every document of the MCP proxy, paging through the list until the server's total is
+ * held. Scope: `ap:docs:read`.
+ */
+export async function listMcpProxyDocuments(mcpProxyId: string, baseUrl: string): Promise<MCPProxyDocument[]> {
+  const path = `/apis/${MCP_PROXY_API_TYPE}/${encodeURIComponent(mcpProxyId)}/docs`;
+  const documents: MCPProxyDocument[] = [];
+  for (;;) {
+    const page = await get<MCPProxyDocumentListResponse>(
+      path,
+      { limit: DOCUMENTS_PAGE_SIZE, offset: documents.length },
+      baseUrl
+    );
+    documents.push(...page.list);
+    if (page.list.length === 0 || documents.length >= page.pagination.total) return documents;
+  }
+}
+
+/** One document's body as stored, with the content type it was stored under. Scope: `ap:docs:read`. */
+export async function getMcpProxyDocumentContent(
+  mcpProxyId: string,
+  docId: string,
+  baseUrl: string
+): Promise<MCPProxyDocumentContent> {
+  return getText(
+    `/apis/${MCP_PROXY_API_TYPE}/${encodeURIComponent(mcpProxyId)}/docs/${encodeURIComponent(docId)}/content`,
+    baseUrl
+  );
+}
+
 export const mcpProxiesApis = {
   createMCPServer,
   getMCPServers,
@@ -357,4 +421,9 @@ export const mcpProxiesApis = {
   getMcpProxyApiPortalPublicationDefinition,
   publishSavedMcpProxyDraft,
   deprecateMcpProxyOnApiPortal,
+  getMcpProxyApiPortalDraftLandingPage,
+  saveMcpProxyApiPortalDraftLandingPage,
+  getMcpProxyApiPortalPublicationLandingPage,
+  listMcpProxyDocuments,
+  getMcpProxyDocumentContent,
 };

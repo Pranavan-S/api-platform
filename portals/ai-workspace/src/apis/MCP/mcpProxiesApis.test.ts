@@ -18,22 +18,29 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { get, post, put } from '../../clients/choreoApiClient';
+import { get, getText, post, put, putText } from '../../clients/choreoApiClient';
 import {
   deprecateMcpProxyOnApiPortal,
   getMcpProxyApiPortalDraftDefinition,
+  getMcpProxyApiPortalDraftLandingPage,
   getMcpProxyApiPortalPublicationDefinition,
+  getMcpProxyApiPortalPublicationLandingPage,
+  getMcpProxyDocumentContent,
   listMcpProxyApiPortalPublications,
+  listMcpProxyDocuments,
   mcpProxiesApis,
   publishSavedMcpProxyDraft,
   saveMcpProxyApiPortalDraft,
   saveMcpProxyApiPortalDraftDefinition,
+  saveMcpProxyApiPortalDraftLandingPage,
 } from './mcpProxiesApis';
 
 vi.mock('../../clients/choreoApiClient', () => ({
   get: vi.fn(),
+  getText: vi.fn(),
   post: vi.fn(),
   put: vi.fn(),
+  putText: vi.fn(),
   del: vi.fn(),
 }));
 
@@ -50,6 +57,8 @@ beforeEach(() => {
   vi.mocked(get).mockReset();
   vi.mocked(post).mockReset();
   vi.mocked(put).mockReset();
+  vi.mocked(getText).mockReset();
+  vi.mocked(putText).mockReset();
 });
 
 describe('listMcpProxyApiPortalPublications', () => {
@@ -145,6 +154,81 @@ describe('deprecateMcpProxyOnApiPortal', () => {
   });
 });
 
+describe('listMcpProxyDocuments', () => {
+  const doc = (id: string) => ({ id, type: 'HowTo', displayName: id });
+  const page = (ids: string[], total: number, offset = 0) => ({
+    list: ids.map(doc),
+    pagination: { total, offset, limit: 100 },
+  });
+
+  it('reads this proxy’s documents from the mcp-proxy collection, escaping its id', async () => {
+    vi.mocked(get).mockResolvedValue(page(['setup', 'faq'], 2));
+
+    const documents = await listMcpProxyDocuments(PROXY, BASE);
+
+    expect(documents.map(({ id }) => id)).toEqual(['setup', 'faq']);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledWith('/apis/mcp-proxy/travel%20mcp/docs', { limit: 100, offset: 0 }, BASE);
+  });
+
+  it('keeps reading, from where the last page ended, until the total is held', async () => {
+    vi.mocked(get).mockResolvedValueOnce(page(['a', 'b'], 3)).mockResolvedValueOnce(page(['c'], 3, 2));
+
+    const documents = await listMcpProxyDocuments(PROXY, BASE);
+
+    expect(documents.map(({ id }) => id)).toEqual(['a', 'b', 'c']);
+    expect(get).toHaveBeenNthCalledWith(2, '/apis/mcp-proxy/travel%20mcp/docs', { limit: 100, offset: 2 }, BASE);
+  });
+
+  it('stops on an empty page even when the total says more exist', async () => {
+    vi.mocked(get).mockResolvedValueOnce(page(['a'], 5)).mockResolvedValueOnce(page([], 5, 1));
+
+    expect(await listMcpProxyDocuments(PROXY, BASE)).toHaveLength(1);
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('the landing page', () => {
+  it('is read from the draft as Markdown', async () => {
+    vi.mocked(getText).mockResolvedValue({ text: '# Draft', contentType: 'text/markdown' });
+
+    expect(await getMcpProxyApiPortalDraftLandingPage(HUB, PROXY, BASE)).toBe('# Draft');
+    expect(getText).toHaveBeenCalledWith(`${PORTAL_PATH}/draft/landing-page`, BASE);
+  });
+
+  it('is read from the live listing as Markdown', async () => {
+    vi.mocked(getText).mockResolvedValue({ text: '# Live', contentType: 'text/markdown' });
+
+    expect(await getMcpProxyApiPortalPublicationLandingPage(HUB, PROXY, BASE)).toBe('# Live');
+    expect(getText).toHaveBeenCalledWith(`${PORTAL_PATH}/publication/landing-page`, BASE);
+  });
+
+  it('is saved to the draft as Markdown', async () => {
+    vi.mocked(putText).mockResolvedValue(undefined);
+
+    await saveMcpProxyApiPortalDraftLandingPage(HUB, PROXY, '# Mine', BASE);
+
+    expect(putText).toHaveBeenCalledWith(`${PORTAL_PATH}/draft/landing-page`, '# Mine', 'text/markdown', BASE);
+  });
+
+  it('lets a missing landing page surface as the error, for the caller to read as "none saved"', async () => {
+    const notFound = Object.assign(new Error('not found'), { status: 404 });
+    vi.mocked(getText).mockRejectedValue(notFound);
+
+    await expect(getMcpProxyApiPortalDraftLandingPage(HUB, PROXY, BASE)).rejects.toBe(notFound);
+  });
+});
+
+describe('getMcpProxyDocumentContent', () => {
+  it('reads one document’s body with the content type it was stored under, escaping both ids', async () => {
+    const body = { text: '# Setup', contentType: 'text/markdown; charset=utf-8' };
+    vi.mocked(getText).mockResolvedValue(body);
+
+    expect(await getMcpProxyDocumentContent(PROXY, 'setup guide', BASE)).toBe(body);
+    expect(getText).toHaveBeenCalledWith('/apis/mcp-proxy/travel%20mcp/docs/setup%20guide/content', BASE);
+  });
+});
+
 describe('mcpProxiesApis', () => {
   it('exposes the existing publishing calls alongside the new ones', () => {
     expect(mcpProxiesApis).toMatchObject({
@@ -159,6 +243,11 @@ describe('mcpProxiesApis', () => {
       getMcpProxyApiPortalPublicationDefinition: expect.any(Function),
       publishSavedMcpProxyDraft: expect.any(Function),
       deprecateMcpProxyOnApiPortal: expect.any(Function),
+      listMcpProxyDocuments: expect.any(Function),
+      getMcpProxyDocumentContent: expect.any(Function),
+      getMcpProxyApiPortalDraftLandingPage: expect.any(Function),
+      saveMcpProxyApiPortalDraftLandingPage: expect.any(Function),
+      getMcpProxyApiPortalPublicationLandingPage: expect.any(Function),
     });
   });
 });
