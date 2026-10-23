@@ -154,3 +154,48 @@ func TestValidateDefinitionContent_RestAPIDelegates(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateDefinitionContent_MCPProxy(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		data        string
+		wantErr     string
+	}{
+		{"json tools only", "application/json", `{"tools":[{"name":"search"}]}`, ""},
+		{"json all three kinds", "application/json", `{"tools":[{"name":"a"}],"resources":[{"name":"b","uri":"x://b"}],"prompts":[{"name":"c"}]}`, ""},
+		{"yaml", "application/yaml", "prompts:\n  - name: summarize\n", ""},
+		{"unrelated keys are left alone", "application/json", `{"tools":[{"name":"a"}],"serverInfo":{"name":"x"}}`, ""},
+		{"empty object", "application/json", `{}`, "at least one"},
+		{"empty lists", "application/json", `{"tools":[],"resources":[],"prompts":[]}`, "at least one"},
+		{"not an object", "application/json", `[1,2]`, "object with tools"},
+		{"invalid json", "application/json", `{`, "object with tools"},
+		{"empty yaml", "application/yaml", "", "object with tools"},
+		{"kind is not a list", "application/json", `{"tools":{"name":"a"}}`, "tools must be a list"},
+		{"entry without a name", "application/json", `{"tools":[{"description":"d"}]}`, "Entry 1 of the definition's tools"},
+		{"blank name", "application/json", `{"prompts":[{"name":"ok"},{"name":"  "}]}`, "Entry 2 of the definition's prompts"},
+		{"entry is not an object", "application/json", `{"resources":["a"]}`, "Entry 1 of the definition's resources"},
+		{"unsupported content type", "application/graphql", `{"tools":[{"name":"a"}]}`, "application/json or application/yaml"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateDefinitionContent(constants.PublicationAPITypeMCPProxy, contentOf(tt.contentType, tt.data))
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("want the definition accepted, got %v", err)
+				}
+				return
+			}
+			if !apperror.APIPublicationValidationFailed.Is(err) || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("want a validation failure containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestValidateDefinitionContent_MCPProxyRequiresDefinition(t *testing.T) {
+	err := validateDefinitionContent(constants.PublicationAPITypeMCPProxy, nil)
+	if !apperror.APIPublicationValidationFailed.Is(err) {
+		t.Fatalf("want a validation failure for a missing definition, got %v", err)
+	}
+}
