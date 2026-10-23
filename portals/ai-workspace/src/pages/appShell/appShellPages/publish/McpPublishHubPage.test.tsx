@@ -39,6 +39,9 @@ vi.mock('../../../../apis/MCP/mcpProxiesApis', () => ({
     getMcpProxyApiPortalPublicationDefinition: vi.fn(),
     saveMcpProxyApiPortalDraft: vi.fn(),
     saveMcpProxyApiPortalDraftDefinition: vi.fn(),
+    getMcpProxyApiPortalDraftLandingPage: vi.fn(),
+    getMcpProxyApiPortalPublicationLandingPage: vi.fn(),
+    saveMcpProxyApiPortalDraftLandingPage: vi.fn(),
     publishSavedMcpProxyDraft: vi.fn(),
     unpublishMcpProxyFromApiPortal: vi.fn(),
     deprecateMcpProxyOnApiPortal: vi.fn(),
@@ -114,6 +117,9 @@ const apiHolds = (answers: Answers = {}) => {
   api.getMcpProxyApiPortalPublicationDefinition.mockImplementation(() => answer(answers.liveDefinition) as never);
   api.saveMcpProxyApiPortalDraft.mockResolvedValue({} as never);
   api.saveMcpProxyApiPortalDraftDefinition.mockResolvedValue(undefined);
+  api.saveMcpProxyApiPortalDraftLandingPage.mockResolvedValue(undefined);
+  api.getMcpProxyApiPortalDraftLandingPage.mockResolvedValue('# Draft page');
+  api.getMcpProxyApiPortalPublicationLandingPage.mockResolvedValue('# Live page');
   api.publishSavedMcpProxyDraft.mockResolvedValue({} as never);
   api.unpublishMcpProxyFromApiPortal.mockResolvedValue(undefined);
   api.deprecateMcpProxyOnApiPortal.mockResolvedValue({} as never);
@@ -443,6 +449,127 @@ describe('McpPublishHubPage', () => {
           'warning'
         )
       );
+    });
+  });
+
+  describe('the landing page', () => {
+    const openLandingPage = async () => {
+      const view = await renderPage();
+      await view.user.click(screen.getByRole('tab', { name: 'Landing Page' }));
+      return view;
+    };
+
+    it('starts from the proxy’s details, and saves the page with the draft after the details', async () => {
+      const { user } = await openLandingPage();
+      await user.click(screen.getByRole('button', { name: 'Create from MCP proxy details' }));
+      expect((screen.getByRole('textbox', { name: 'Landing page (Markdown)' }) as HTMLTextAreaElement).value).toContain(
+        '## Overview\n\nPlans trips.'
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+
+      await waitFor(() =>
+        expect(api.saveMcpProxyApiPortalDraftLandingPage).toHaveBeenCalledWith(
+          'main',
+          'travel',
+          expect.stringContaining('## Tools'),
+          expect.any(String)
+        )
+      );
+      expect(order(api.saveMcpProxyApiPortalDraft)).toBeLessThan(order(api.saveMcpProxyApiPortalDraftLandingPage));
+    });
+
+    it('is saved before it publishes, and only once the details and definition are in', async () => {
+      const { user } = await openLandingPage();
+      await user.click(screen.getByRole('button', { name: 'Create from MCP proxy details' }));
+
+      await user.click(mainButton());
+
+      await waitFor(() => expect(api.publishSavedMcpProxyDraft).toHaveBeenCalled());
+      expect(order(api.saveMcpProxyApiPortalDraftDefinition)).toBeLessThan(order(api.saveMcpProxyApiPortalDraftLandingPage));
+      expect(order(api.saveMcpProxyApiPortalDraftLandingPage)).toBeLessThan(order(api.publishSavedMcpProxyDraft));
+    });
+
+    it('does not publish when the page cannot be saved, and reports it', async () => {
+      api.saveMcpProxyApiPortalDraftLandingPage.mockRejectedValue(apiError('too large', 'PAYLOAD_TOO_LARGE', 413));
+      const { user } = await openLandingPage();
+      await user.click(screen.getByRole('button', { name: 'Create from MCP proxy details' }));
+
+      await user.click(mainButton());
+
+      await waitFor(() => expect(showSnackbar).toHaveBeenCalledWith('too large', 'error'));
+      expect(api.publishSavedMcpProxyDraft).not.toHaveBeenCalled();
+    });
+
+    it('opens on the draft’s own page, and sends nothing for a page the draft already holds', async () => {
+      apiHolds({ draft: { ...draft, hasLandingPage: true } });
+      const { user } = await openLandingPage();
+      expect(screen.getByRole('textbox', { name: 'Landing page (Markdown)' })).toHaveValue('# Draft page');
+      expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled();
+
+      await user.click(screen.getByRole('tab', { name: 'MCP Proxy Details' }));
+      await user.type(screen.getByLabelText(/^Name/), '!');
+      await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+
+      await waitFor(() => expect(api.saveMcpProxyApiPortalDraft).toHaveBeenCalled());
+      expect(api.saveMcpProxyApiPortalDraftLandingPage).not.toHaveBeenCalled();
+    });
+
+    it('counts an edit of the page as something to save', async () => {
+      apiHolds({ draft: { ...draft, hasLandingPage: true } });
+      const { user } = await openLandingPage();
+
+      await user.type(screen.getByRole('textbox', { name: 'Landing page (Markdown)' }), '!');
+      await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+
+      await waitFor(() =>
+        expect(api.saveMcpProxyApiPortalDraftLandingPage).toHaveBeenCalledWith(
+          'main',
+          'travel',
+          '# Draft page!',
+          expect.any(String)
+        )
+      );
+    });
+
+    it('pre-fills from the live listing when the draft has none, and sends it to the draft when saved', async () => {
+      apiHolds({ draft, publication: { ...live, hasLandingPage: true }, liveDefinition: { tools: [search] } });
+      const { user } = await renderPage();
+      await user.click(screen.getByRole('button', { name: 'Draft' }));
+      await user.click(screen.getByRole('tab', { name: 'Landing Page' }));
+      expect(screen.getByRole('textbox', { name: 'Landing page (Markdown)' })).toHaveValue('# Live page');
+
+      await user.click(screen.getByRole('tab', { name: 'MCP Proxy Details' }));
+      await user.type(screen.getByLabelText(/^Name/), '!');
+      await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+
+      await waitFor(() =>
+        expect(api.saveMcpProxyApiPortalDraftLandingPage).toHaveBeenCalledWith('main', 'travel', '# Live page', expect.any(String))
+      );
+    });
+
+    it('offers no editor, so the stored page is never written over, when it cannot be read', async () => {
+      apiHolds({ draft: { ...draft, hasLandingPage: true } });
+      api.getMcpProxyApiPortalDraftLandingPage.mockRejectedValue(apiError('boom', undefined, 500));
+
+      await openLandingPage();
+
+      expect(screen.getByText('Unable to load the landing page.')).toBeInTheDocument();
+      expect(screen.queryByRole('textbox', { name: 'Landing page (Markdown)' })).not.toBeInTheDocument();
+    });
+
+    it('shows the live page read-only in the published view', async () => {
+      apiHolds({
+        draft: { ...draft, hasLandingPage: true },
+        publication: { ...live, hasLandingPage: true },
+        liveDefinition: { tools: [search] },
+      });
+      const { user } = await renderPage();
+
+      await user.click(screen.getByRole('tab', { name: 'Landing Page' }));
+
+      expect(screen.getByRole('region', { name: 'Published page' })).toHaveTextContent('Live page');
+      expect(screen.queryByRole('textbox', { name: 'Landing page (Markdown)' })).not.toBeInTheDocument();
     });
   });
 

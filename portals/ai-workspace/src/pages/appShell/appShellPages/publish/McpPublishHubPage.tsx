@@ -40,6 +40,8 @@ import { AppPage } from './AppPage';
 import { CapabilitiesTab, type CapabilitiesTabProps } from './CapabilitiesTab';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DocumentsTab } from './DocumentsTab';
+import { LandingPageTab } from './LandingPageTab';
+import { buildLandingPageStarter } from './landingPageStarter';
 import { McpProxyDetailsTab } from './McpProxyDetailsTab';
 import {
   definitionToText,
@@ -57,6 +59,7 @@ import { PublicationVersionToggle } from './PublicationVersionToggle';
 import { PublishActionsBar } from './PublishActionsBar';
 import { ErrorState, LoadingState } from './PublishStates';
 import { SubscriptionPlansTab } from './SubscriptionPlansTab';
+import { usePublishAssets } from './usePublishAssets';
 import { usePublishPageData } from './usePublishPageData';
 
 const messages = defineMessages({
@@ -158,6 +161,10 @@ const messages = defineMessages({
     id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.tabDocuments',
     defaultMessage: 'Documentation',
   },
+  tabLanding: {
+    id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.tabLanding',
+    defaultMessage: 'Landing Page',
+  },
   typeToConfirm: {
     id: 'aiWorkspace.pages.appShell.appShellPages.publish.page.typeToConfirm',
     defaultMessage: 'Type "{name}" to confirm',
@@ -209,7 +216,7 @@ const ACTION_BAR_HEIGHT = 40;
 /** The fields that show a validation message. */
 const FORM_FIELDS: DraftFormField[] = ['displayName', 'version', 'productionUrl', 'sandboxUrl'];
 
-type PublishTab = 'details' | 'capabilities' | 'subscriptionPlans' | 'documentations';
+type PublishTab = 'details' | 'capabilities' | 'subscriptionPlans' | 'documentations' | 'landingPage';
 
 /** Which action is currently in flight, so the right button (and only that one) shows busy. */
 type PendingAction = 'idle' | 'saving' | 'publishing' | 'unpublishing' | 'deprecating';
@@ -243,13 +250,14 @@ const bold = (text: ReactNode) => (
 
 /**
  * The publish/unpublish/deprecate flow for one MCP proxy on one MCP Hub: "MCP Proxy
- * Details", "Capabilities", "Subscription Plans" and "Documentation" tabs over a draft/published
- * switch, with Save Draft and a split Publish button beneath.
+ * Details", "Capabilities", "Subscription Plans", "Documentation" and "Landing Page" tabs
+ * over a draft/published switch, with Save Draft and a split Publish button beneath.
  *
- * Save Draft always writes `.../draft`, and writes `.../draft/definition` too only
- * when the definition parses, reporting honestly when it couldn't; Publish requires
- * both saves to succeed before it calls `.../publish`, since the server's publish
- * takes no body and only publishes what the draft holds.
+ * Save Draft always writes `.../draft`, then the landing page if the draft does not
+ * already hold the one shown, and `.../draft/definition` too only when the definition
+ * parses, reporting honestly when it couldn't; Publish requires every save to succeed
+ * before it calls `.../publish`, since the server's publish takes no body and only
+ * publishes what the draft holds.
  */
 export default function McpPublishHubPage(): React.JSX.Element {
   const intl = useIntl();
@@ -277,6 +285,8 @@ export default function McpPublishHubPage(): React.JSX.Element {
   const [values, setValues] = useState<DraftFormValues>(emptyDraftFormValues);
   const [touched, setTouched] = useState<Partial<Record<DraftFormField, boolean>>>({});
   const [definitionText, setDefinitionText] = useState('');
+  // The parts of the listing saved on their own: for now, the landing page.
+  const assets = usePublishAssets(apiPortalId, serverId);
   // What the server holds for the fields shown, so edits made since can be told apart.
   const [saved, setSaved] = useState({ definitionText: '', values: emptyDraftFormValues });
   const [pendingAction, setPendingAction] = useState<PendingAction>('idle');
@@ -297,9 +307,10 @@ export default function McpPublishHubPage(): React.JSX.Element {
     if (initialized || !data.seed) return;
     setValues(data.seed.values);
     setDefinitionText(data.seed.definitionText);
+    assets.seed(data.seed);
     setSaved({ definitionText: data.seed.definitionText, values: data.seed.values });
     setInitialized(true);
-  }, [initialized, data.seed]);
+  }, [initialized, data.seed, assets.seed]);
 
   // A plan deleted elsewhere has no card to clear but would still be submitted, so drop it and say so.
   useEffect(() => {
@@ -366,6 +377,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
 
   const hasUnsavedChanges =
     definitionText !== saved.definitionText ||
+    assets.hasUnsavedChanges ||
     (Object.keys(values) as (keyof DraftFormValues)[]).some((field) => {
       const current = values[field];
       const savedValue = saved.values[field];
@@ -457,6 +469,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
     runAction('saving', intl.formatMessage(messages.saveFailed), async () => {
       if (blockedByInactivePlans()) return;
       if (!(await saveDetails())) return;
+      await assets.saveLandingPage();
       const definitionSaved = await saveDefinition();
       showSnackbar(
         definitionSaved ? intl.formatMessage(messages.draftSaved) : intl.formatMessage(messages.detailsSavedOnly),
@@ -477,6 +490,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
       // partial save, which would publish whatever definition was already
       // there rather than what the user is looking at.
       if (!(await saveDefinition())) return;
+      await assets.saveLandingPage();
       try {
         await mcpProxiesApis.publishSavedMcpProxyDraft(apiPortalId, serverId, PLATFORM_API_BASE_URL);
       } catch (error) {
@@ -552,6 +566,9 @@ export default function McpPublishHubPage(): React.JSX.Element {
             values={publishedValues}
           />;
       }
+      if (tab === 'landingPage') {
+        return <LandingPageTab failed={data.publishedLandingPage.failed} readOnly text={data.publishedLandingPage.text} />;
+      }
       if (tab === 'details') return <McpProxyDetailsTab readOnly values={publishedValues} />;
       if (data.publishedDefinition.isLoading) {
         return <LoadingState label={intl.formatMessage(messages.loadingPublishedSpec)} />;
@@ -571,6 +588,18 @@ export default function McpPublishHubPage(): React.JSX.Element {
           plans={plans.plans}
           savedPlanIds={savedPlanIds}
           values={values}
+        />
+      );
+    }
+    if (tab === 'landingPage') {
+      return (
+        <LandingPageTab
+          disabled={pendingAction !== 'idle'}
+          failed={assets.landingPageFailed}
+          generated={assets.generatedLandingPage}
+          onChange={assets.setLandingPage}
+          onCreate={() => assets.createLandingPage(buildLandingPageStarter(values, definitionText))}
+          text={assets.landingPage}
         />
       );
     }
@@ -654,6 +683,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
               <Tab label={intl.formatMessage(messages.tabCapabilities)} value="capabilities" />
               <Tab label={intl.formatMessage(messages.tabPlans)} value="subscriptionPlans" />
               <Tab label={intl.formatMessage(messages.tabDocuments)} value="documentations" />
+              <Tab label={intl.formatMessage(messages.tabLanding)} value="landingPage" />
             </Tabs>
             <PublicationVersionToggle
               disabled={pendingAction !== 'idle'}

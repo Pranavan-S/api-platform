@@ -32,6 +32,8 @@ vi.mock('../../../../apis/MCP/mcpProxiesApis', () => ({
     getMcpProxyApiPortalPublication: vi.fn(),
     getMcpProxyApiPortalDraftDefinition: vi.fn(),
     getMcpProxyApiPortalPublicationDefinition: vi.fn(),
+    getMcpProxyApiPortalDraftLandingPage: vi.fn(),
+    getMcpProxyApiPortalPublicationLandingPage: vi.fn(),
   },
 }));
 vi.mock('../../../../hooks/useMcpDeployedGateways', () => ({ useMcpDeployedGateways: vi.fn() }));
@@ -71,6 +73,8 @@ const readsAre = (answers: Partial<Record<'draft' | 'publication' | 'draftDefini
   api.getMcpProxyApiPortalPublication.mockImplementation(() => answer(answers.publication) as never);
   api.getMcpProxyApiPortalDraftDefinition.mockImplementation(() => answer(answers.draftDefinition) as never);
   api.getMcpProxyApiPortalPublicationDefinition.mockImplementation(() => answer(answers.liveDefinition) as never);
+  api.getMcpProxyApiPortalDraftLandingPage.mockResolvedValue('# Draft page');
+  api.getMcpProxyApiPortalPublicationLandingPage.mockResolvedValue('# Live page');
   vi.mocked(getApiPortal).mockResolvedValue(hub as never);
 };
 
@@ -188,6 +192,74 @@ describe('usePublishPageData', () => {
 
       expect(result.current.isLoading).toBe(false);
       await waitFor(() => expect(api.getMCPServer).toHaveBeenCalledTimes(2));
+    });
+  });
+
+  describe('the landing page', () => {
+    const withPage = { hasLandingPage: true };
+
+    it('opens on the draft’s own page, which the draft already stores', async () => {
+      readsAre({ draft: { ...draft, ...withPage }, publication: { ...publication, ...withPage } });
+
+      const { result } = renderData();
+
+      await waitFor(() => expect(result.current.seed).toBeDefined());
+      expect(result.current.seed?.landingPage).toEqual({ text: '# Draft page', inDraft: true });
+      expect(result.current.seed?.landingPageFailed).toBe(false);
+    });
+
+    it('falls back to the live listing’s page, which the draft does not store yet', async () => {
+      readsAre({ draft, publication: { ...publication, ...withPage } });
+
+      const { result } = renderData();
+
+      await waitFor(() => expect(result.current.seed).toBeDefined());
+      expect(result.current.seed?.landingPage).toEqual({ text: '# Live page', inDraft: false });
+      expect(api.getMcpProxyApiPortalDraftLandingPage).not.toHaveBeenCalled();
+    });
+
+    it('has none, and reads none, when neither the draft nor the live listing says it has one', async () => {
+      readsAre({ draft, publication });
+
+      const { result } = renderData();
+
+      await waitFor(() => expect(result.current.seed).toBeDefined());
+      expect(result.current.seed?.landingPage).toBeUndefined();
+      expect(result.current.seed?.landingPageFailed).toBe(false);
+      expect(api.getMcpProxyApiPortalDraftLandingPage).not.toHaveBeenCalled();
+      expect(api.getMcpProxyApiPortalPublicationLandingPage).not.toHaveBeenCalled();
+    });
+
+    it('does not fall through to the live page when the draft’s own cannot be read, so it is never written over', async () => {
+      readsAre({ draft: { ...draft, ...withPage }, publication: { ...publication, ...withPage } });
+      api.getMcpProxyApiPortalDraftLandingPage.mockRejectedValue(new Error('boom'));
+
+      const { result } = renderData();
+
+      await waitFor(() => expect(result.current.seed).toBeDefined());
+      expect(result.current.seed?.landingPage).toBeUndefined();
+      expect(result.current.seed?.landingPageFailed).toBe(true);
+    });
+
+    it('still opens when the live page cannot be read, and says so for the published view', async () => {
+      readsAre({ draft, publication: { ...publication, ...withPage } });
+      api.getMcpProxyApiPortalPublicationLandingPage.mockRejectedValue(new Error('boom'));
+
+      const { result } = renderData();
+
+      await waitFor(() => expect(result.current.seed).toBeDefined());
+      expect(result.current.seed?.landingPageFailed).toBe(true);
+      expect(result.current.publishedLandingPage).toEqual({ failed: true });
+      expect(result.current.error).toBeUndefined();
+    });
+
+    it('shows the published view the live page whatever the draft holds', async () => {
+      readsAre({ draft: { ...draft, ...withPage }, publication: { ...publication, ...withPage } });
+
+      const { result } = renderData();
+
+      await waitFor(() => expect(result.current.seed).toBeDefined());
+      expect(result.current.publishedLandingPage).toEqual({ text: '# Live page', failed: false });
     });
   });
 

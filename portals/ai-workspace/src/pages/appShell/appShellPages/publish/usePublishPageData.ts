@@ -33,9 +33,17 @@ import {
   type McpDefinition,
 } from './mcpPublishForm';
 
-/** What the editor opens with, from the freshest tier that has each part. */
+/** `inDraft`: the draft already stores it, so saving need not send it. */
+export type LandingPageSeed = { text: string; inDraft: boolean };
+
+/**
+ * What the editor opens with, from the freshest tier that has each part.
+ * `landingPageFailed`: a tier has a landing page but reading it failed.
+ */
 export type PublishSeed = {
   definitionText: string;
+  landingPage?: LandingPageSeed;
+  landingPageFailed: boolean;
   values: DraftFormValues;
 };
 
@@ -51,6 +59,24 @@ async function orUndefinedOn404<T>(call: Promise<T>): Promise<T | undefined> {
   }
 }
 
+/** A stored part of a listing, read when the listing's `has…` flag says it exists. */
+type ReadAsset = { text?: string; failed: boolean };
+
+/**
+ * A part of a listing that the listing's flag says exists. One that cannot be read is
+ * reported as failed rather than failing the page, and is never mistaken for one that
+ * does not exist.
+ */
+async function readAsset(exists: boolean | undefined, read: () => Promise<string>): Promise<ReadAsset> {
+  if (!exists) return { failed: false };
+  try {
+    return { text: await read(), failed: false };
+  } catch (error) {
+    logger.error('Failed to read a part of the publication:', error);
+    return { failed: true };
+  }
+}
+
 type Loaded = {
   server: MCPServer;
   portal?: ApiPortal;
@@ -58,6 +84,8 @@ type Loaded = {
   publication?: Publication;
   draftDefinition: Definition;
   publicationDefinition: Definition;
+  draftLandingPage: ReadAsset;
+  publicationLandingPage: ReadAsset;
 };
 
 /**
@@ -70,6 +98,11 @@ type Loaded = {
  * the proxy itself exposes. The gateways the proxy is deployed to are read for
  * the Production URL's choices and its default (the first); a failed read only
  * leaves the choices empty.
+ *
+ * The landing page comes from the draft if it has one, else from the live listing, by the
+ * `hasLandingPage` flags rather than by whether a read worked: a failed read must not fall
+ * through to the live page, or saving would overwrite the draft's own with it. The live one
+ * is read whenever the listing has it, for the published view.
  *
  * `isLoading` is latched: the page is loading until everything it opens on is
  * ready, and not again for the refetches that follow its own saves.
@@ -111,9 +144,26 @@ export function usePublishPageData(
                 mcpProxiesApis.getMcpProxyApiPortalPublicationDefinition(apiPortalId, serverId, PLATFORM_API_BASE_URL)
               )
             : undefined;
+        const [draftLandingPage, publicationLandingPage] = await Promise.all([
+          readAsset(draft?.hasLandingPage, () =>
+            mcpProxiesApis.getMcpProxyApiPortalDraftLandingPage(apiPortalId, serverId, PLATFORM_API_BASE_URL)
+          ),
+          readAsset(publication?.hasLandingPage, () =>
+            mcpProxiesApis.getMcpProxyApiPortalPublicationLandingPage(apiPortalId, serverId, PLATFORM_API_BASE_URL)
+          ),
+        ]);
         if (cancelled) return;
         setError(undefined);
-        setLoaded({ server, portal, draft, publication, draftDefinition, publicationDefinition });
+        setLoaded({
+          server,
+          portal,
+          draft,
+          publication,
+          draftDefinition,
+          publicationDefinition,
+          draftLandingPage,
+          publicationLandingPage,
+        });
       } catch (loadError) {
         logger.error('Failed to load the MCP publish page:', loadError);
         if (!cancelled) setError(loadError instanceof Error ? loadError : new Error(String(loadError)));
@@ -158,8 +208,16 @@ export function usePublishPageData(
   const seed = useMemo<PublishSeed | undefined>(() => {
     if (!isReady || !loaded) return undefined;
     const definition = loaded.draftDefinition ?? loaded.publicationDefinition ?? (loaded.server.capabilities as Definition);
+    const landingPage = loaded.draft?.hasLandingPage
+      ? { read: loaded.draftLandingPage, inDraft: true }
+      : loaded.publication?.hasLandingPage
+        ? { read: loaded.publicationLandingPage, inDraft: false }
+        : undefined;
     return {
       definitionText: definitionToText(definition),
+      landingPage:
+        landingPage?.read.text === undefined ? undefined : { text: landingPage.read.text, inDraft: landingPage.inDraft },
+      landingPageFailed: Boolean(landingPage?.read.failed),
       values: resolveDraftFormValues(loaded.draft, loaded.publication, loaded.server, productionUrlOptions[0]?.url),
     };
   }, [isReady, loaded, productionUrlOptions]);
@@ -175,6 +233,7 @@ export function usePublishPageData(
     isLoading: !isReady,
     productionUrlOptions,
     publishedDefinition,
+    publishedLandingPage: loaded?.publicationLandingPage ?? { failed: false },
     seed,
     refetch,
   };
