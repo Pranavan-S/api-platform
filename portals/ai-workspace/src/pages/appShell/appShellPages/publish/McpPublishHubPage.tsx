@@ -31,6 +31,7 @@ import useAIWorkspaceSnackbar from '../../../../hooks/aiWorkspaceSnackbar';
 import { useFillScrollArea } from '../../../../hooks/useFillScrollArea';
 import { useFrozenWhile } from '../../../../hooks/useFrozenWhile';
 import { useMcpProxyDocuments } from '../../../../hooks/useMcpProxyDocuments';
+import { useObjectUrl } from '../../../../hooks/useObjectUrl';
 import { usePublishProject } from '../../../../hooks/usePublishProject';
 import { useSubscriptionPlans } from '../../../../hooks/useSubscriptionPlans';
 import { PLATFORM_API_BASE_URL } from '../../../../paths';
@@ -51,6 +52,7 @@ import {
   resolveDraftFormValues,
   sameSelection,
   validateDraftFormValues,
+  validateThumbnailFile,
   type DraftFormField,
   type DraftFormValues,
 } from './mcpPublishForm';
@@ -253,11 +255,11 @@ const bold = (text: ReactNode) => (
  * Details", "Capabilities", "Subscription Plans", "Documentation" and "Landing Page" tabs
  * over a draft/published switch, with Save Draft and a split Publish button beneath.
  *
- * Save Draft always writes `.../draft`, then the landing page if the draft does not
- * already hold the one shown, and `.../draft/definition` too only when the definition
- * parses, reporting honestly when it couldn't; Publish requires every save to succeed
- * before it calls `.../publish`, since the server's publish takes no body and only
- * publishes what the draft holds.
+ * Save Draft always writes `.../draft`, then the thumbnail and the landing page if the
+ * draft does not already hold the ones shown, and `.../draft/definition` too only when
+ * the definition parses, reporting honestly when it couldn't; Publish requires every save
+ * to succeed before it calls `.../publish`, since the server's publish takes no body and
+ * only publishes what the draft holds.
  */
 export default function McpPublishHubPage(): React.JSX.Element {
   const intl = useIntl();
@@ -285,8 +287,10 @@ export default function McpPublishHubPage(): React.JSX.Element {
   const [values, setValues] = useState<DraftFormValues>(emptyDraftFormValues);
   const [touched, setTouched] = useState<Partial<Record<DraftFormField, boolean>>>({});
   const [definitionText, setDefinitionText] = useState('');
-  // The parts of the listing saved on their own: for now, the landing page.
+  // The parts of the listing saved on their own: the thumbnail and the landing page.
   const assets = usePublishAssets(apiPortalId, serverId);
+  const thumbnailUrl = useObjectUrl(assets.thumbnail);
+  const publishedThumbnailUrl = useObjectUrl(data.publishedThumbnail);
   // What the server holds for the fields shown, so edits made since can be told apart.
   const [saved, setSaved] = useState({ definitionText: '', values: emptyDraftFormValues });
   const [pendingAction, setPendingAction] = useState<PendingAction>('idle');
@@ -465,10 +469,21 @@ export default function McpPublishHubPage(): React.JSX.Element {
     }
   };
 
+  /** Takes an image the user picked as the thumbnail, unless the server would refuse it. */
+  const pickThumbnail = (file: File) => {
+    const problem = validateThumbnailFile(file);
+    if (problem) {
+      showSnackbar(intl.formatMessage(problem), 'error');
+      return;
+    }
+    assets.setThumbnail(file);
+  };
+
   const handleSaveDraft = () =>
     runAction('saving', intl.formatMessage(messages.saveFailed), async () => {
       if (blockedByInactivePlans()) return;
       if (!(await saveDetails())) return;
+      await assets.saveThumbnail();
       await assets.saveLandingPage();
       const definitionSaved = await saveDefinition();
       showSnackbar(
@@ -490,6 +505,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
       // partial save, which would publish whatever definition was already
       // there rather than what the user is looking at.
       if (!(await saveDefinition())) return;
+      await assets.saveThumbnail();
       await assets.saveLandingPage();
       try {
         await mcpProxiesApis.publishSavedMcpProxyDraft(apiPortalId, serverId, PLATFORM_API_BASE_URL);
@@ -569,7 +585,7 @@ export default function McpPublishHubPage(): React.JSX.Element {
       if (tab === 'landingPage') {
         return <LandingPageTab failed={data.publishedLandingPage.failed} readOnly text={data.publishedLandingPage.text} />;
       }
-      if (tab === 'details') return <McpProxyDetailsTab readOnly values={publishedValues} />;
+      if (tab === 'details') return <McpProxyDetailsTab readOnly thumbnailUrl={publishedThumbnailUrl} values={publishedValues} />;
       if (data.publishedDefinition.isLoading) {
         return <LoadingState label={intl.formatMessage(messages.loadingPublishedSpec)} />;
       }
@@ -627,7 +643,9 @@ export default function McpPublishHubPage(): React.JSX.Element {
           }}
           onBlurField={markTouched}
           onChange={handleChange}
+          onThumbnailPick={pickThumbnail}
           productionUrlOptions={data.productionUrlOptions}
+          thumbnailUrl={thumbnailUrl}
           values={values}
         />
       );

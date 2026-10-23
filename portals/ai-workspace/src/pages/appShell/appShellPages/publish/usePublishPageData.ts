@@ -34,6 +34,9 @@ import {
 } from './mcpPublishForm';
 
 /** `inDraft`: the draft already stores it, so saving need not send it. */
+export type ThumbnailSeed = { blob: Blob; inDraft: boolean };
+
+/** `inDraft`: the draft already stores it, so saving need not send it. */
 export type LandingPageSeed = { text: string; inDraft: boolean };
 
 /**
@@ -44,6 +47,7 @@ export type PublishSeed = {
   definitionText: string;
   landingPage?: LandingPageSeed;
   landingPageFailed: boolean;
+  thumbnail?: ThumbnailSeed;
   values: DraftFormValues;
 };
 
@@ -60,17 +64,17 @@ async function orUndefinedOn404<T>(call: Promise<T>): Promise<T | undefined> {
 }
 
 /** A stored part of a listing, read when the listing's `has…` flag says it exists. */
-type ReadAsset = { text?: string; failed: boolean };
+type ReadAsset<T> = { value?: T; failed: boolean };
 
 /**
  * A part of a listing that the listing's flag says exists. One that cannot be read is
  * reported as failed rather than failing the page, and is never mistaken for one that
  * does not exist.
  */
-async function readAsset(exists: boolean | undefined, read: () => Promise<string>): Promise<ReadAsset> {
+async function readAsset<T>(exists: boolean | undefined, read: () => Promise<T>): Promise<ReadAsset<T>> {
   if (!exists) return { failed: false };
   try {
-    return { text: await read(), failed: false };
+    return { value: await read(), failed: false };
   } catch (error) {
     logger.error('Failed to read a part of the publication:', error);
     return { failed: true };
@@ -84,8 +88,10 @@ type Loaded = {
   publication?: Publication;
   draftDefinition: Definition;
   publicationDefinition: Definition;
-  draftLandingPage: ReadAsset;
-  publicationLandingPage: ReadAsset;
+  draftLandingPage: ReadAsset<string>;
+  publicationLandingPage: ReadAsset<string>;
+  draftThumbnail: ReadAsset<Blob>;
+  publicationThumbnail: ReadAsset<Blob>;
 };
 
 /**
@@ -102,7 +108,8 @@ type Loaded = {
  * The landing page comes from the draft if it has one, else from the live listing, by the
  * `hasLandingPage` flags rather than by whether a read worked: a failed read must not fall
  * through to the live page, or saving would overwrite the draft's own with it. The live one
- * is read whenever the listing has it, for the published view.
+ * is read whenever the listing has it, for the published view. The thumbnail is chosen the
+ * same way, by `hasThumbnail`.
  *
  * `isLoading` is latched: the page is loading until everything it opens on is
  * ready, and not again for the refetches that follow its own saves.
@@ -144,12 +151,18 @@ export function usePublishPageData(
                 mcpProxiesApis.getMcpProxyApiPortalPublicationDefinition(apiPortalId, serverId, PLATFORM_API_BASE_URL)
               )
             : undefined;
-        const [draftLandingPage, publicationLandingPage] = await Promise.all([
+        const [draftLandingPage, publicationLandingPage, draftThumbnail, publicationThumbnail] = await Promise.all([
           readAsset(draft?.hasLandingPage, () =>
             mcpProxiesApis.getMcpProxyApiPortalDraftLandingPage(apiPortalId, serverId, PLATFORM_API_BASE_URL)
           ),
           readAsset(publication?.hasLandingPage, () =>
             mcpProxiesApis.getMcpProxyApiPortalPublicationLandingPage(apiPortalId, serverId, PLATFORM_API_BASE_URL)
+          ),
+          readAsset(draft?.hasThumbnail, () =>
+            mcpProxiesApis.getMcpProxyApiPortalDraftThumbnail(apiPortalId, serverId, PLATFORM_API_BASE_URL)
+          ),
+          readAsset(publication?.hasThumbnail, () =>
+            mcpProxiesApis.getMcpProxyApiPortalPublicationThumbnail(apiPortalId, serverId, PLATFORM_API_BASE_URL)
           ),
         ]);
         if (cancelled) return;
@@ -163,6 +176,8 @@ export function usePublishPageData(
           publicationDefinition,
           draftLandingPage,
           publicationLandingPage,
+          draftThumbnail,
+          publicationThumbnail,
         });
       } catch (loadError) {
         logger.error('Failed to load the MCP publish page:', loadError);
@@ -213,11 +228,17 @@ export function usePublishPageData(
       : loaded.publication?.hasLandingPage
         ? { read: loaded.publicationLandingPage, inDraft: false }
         : undefined;
+    const thumbnail = loaded.draft?.hasThumbnail
+      ? { read: loaded.draftThumbnail, inDraft: true }
+      : loaded.publication?.hasThumbnail
+        ? { read: loaded.publicationThumbnail, inDraft: false }
+        : undefined;
     return {
       definitionText: definitionToText(definition),
       landingPage:
-        landingPage?.read.text === undefined ? undefined : { text: landingPage.read.text, inDraft: landingPage.inDraft },
+        landingPage?.read.value === undefined ? undefined : { text: landingPage.read.value, inDraft: landingPage.inDraft },
       landingPageFailed: Boolean(landingPage?.read.failed),
+      thumbnail: thumbnail?.read.value === undefined ? undefined : { blob: thumbnail.read.value, inDraft: thumbnail.inDraft },
       values: resolveDraftFormValues(loaded.draft, loaded.publication, loaded.server, productionUrlOptions[0]?.url),
     };
   }, [isReady, loaded, productionUrlOptions]);
@@ -233,7 +254,11 @@ export function usePublishPageData(
     isLoading: !isReady,
     productionUrlOptions,
     publishedDefinition,
-    publishedLandingPage: loaded?.publicationLandingPage ?? { failed: false },
+    publishedLandingPage: {
+      text: loaded?.publicationLandingPage.value,
+      failed: Boolean(loaded?.publicationLandingPage.failed),
+    },
+    publishedThumbnail: loaded?.publicationThumbnail.value,
     seed,
     refetch,
   };

@@ -30,6 +30,7 @@ import {
   resolveDraftFormValues,
   sameSelection,
   validateDraftFormValues,
+  validateThumbnailFile,
   type DraftFormValues,
 } from './mcpPublishForm';
 
@@ -255,5 +256,26 @@ describe('nameInitials', () => {
 
   it('keeps non-latin letters', () => {
     expect(nameInitials('日本語')).toBe('日本');
+  });
+});
+
+describe('validateThumbnailFile', () => {
+  const MB = 1024 * 1024;
+
+  it.each(['image/png', 'image/jpeg'])('accepts a %s image', (type) => {
+    expect(validateThumbnailFile({ size: 1000, type })).toBeUndefined();
+  });
+
+  it.each(['image/gif', 'image/webp', 'image/svg+xml', 'application/pdf', ''])('refuses %j, which the portal cannot show', (type) => {
+    expect(validateThumbnailFile({ size: 1000, type })).toBe(publishFormMessages.thumbnailType);
+  });
+
+  it('accepts an image of exactly 2 MB and refuses one a byte over', () => {
+    expect(validateThumbnailFile({ size: 2 * MB, type: 'image/png' })).toBeUndefined();
+    expect(validateThumbnailFile({ size: 2 * MB + 1, type: 'image/png' })).toBe(publishFormMessages.thumbnailSize);
+  });
+
+  it('names the wrong type before the size when both are wrong', () => {
+    expect(validateThumbnailFile({ size: 5 * MB, type: 'image/gif' })).toBe(publishFormMessages.thumbnailType);
   });
 });

@@ -34,6 +34,8 @@ vi.mock('../../../../apis/MCP/mcpProxiesApis', () => ({
     getMcpProxyApiPortalPublicationDefinition: vi.fn(),
     getMcpProxyApiPortalDraftLandingPage: vi.fn(),
     getMcpProxyApiPortalPublicationLandingPage: vi.fn(),
+    getMcpProxyApiPortalDraftThumbnail: vi.fn(),
+    getMcpProxyApiPortalPublicationThumbnail: vi.fn(),
   },
 }));
 vi.mock('../../../../hooks/useMcpDeployedGateways', () => ({ useMcpDeployedGateways: vi.fn() }));
@@ -63,6 +65,9 @@ const publication = {
 };
 const gateway = { id: 'gw1', name: 'prod', displayName: 'Prod', endpoints: ['https://gw.example.com'] };
 
+const draftImage = new Blob(['draft'], { type: 'image/png' });
+const liveImage = new Blob(['live'], { type: 'image/png' });
+
 const notFound = () => Object.assign(new Error('not found'), { status: 404 });
 
 /** Every read answers "nothing saved" unless a case says otherwise. */
@@ -75,6 +80,8 @@ const readsAre = (answers: Partial<Record<'draft' | 'publication' | 'draftDefini
   api.getMcpProxyApiPortalPublicationDefinition.mockImplementation(() => answer(answers.liveDefinition) as never);
   api.getMcpProxyApiPortalDraftLandingPage.mockResolvedValue('# Draft page');
   api.getMcpProxyApiPortalPublicationLandingPage.mockResolvedValue('# Live page');
+  api.getMcpProxyApiPortalDraftThumbnail.mockResolvedValue(draftImage);
+  api.getMcpProxyApiPortalPublicationThumbnail.mockResolvedValue(liveImage);
   vi.mocked(getApiPortal).mockResolvedValue(hub as never);
 };
 
@@ -260,6 +267,72 @@ describe('usePublishPageData', () => {
 
       await waitFor(() => expect(result.current.seed).toBeDefined());
       expect(result.current.publishedLandingPage).toEqual({ text: '# Live page', failed: false });
+    });
+  });
+
+  describe('the thumbnail', () => {
+    const withImage = { hasThumbnail: true };
+
+    it('opens on the draft’s own image, which the draft already stores', async () => {
+      readsAre({ draft: { ...draft, ...withImage }, publication: { ...publication, ...withImage } });
+
+      const { result } = renderData();
+
+      await waitFor(() => expect(result.current.seed).toBeDefined());
+      expect(result.current.seed?.thumbnail).toEqual({ blob: draftImage, inDraft: true });
+    });
+
+    it('falls back to the live listing’s image, which the draft does not store yet', async () => {
+      readsAre({ draft, publication: { ...publication, ...withImage } });
+
+      const { result } = renderData();
+
+      await waitFor(() => expect(result.current.seed).toBeDefined());
+      expect(result.current.seed?.thumbnail).toEqual({ blob: liveImage, inDraft: false });
+      expect(api.getMcpProxyApiPortalDraftThumbnail).not.toHaveBeenCalled();
+    });
+
+    it('has none, and reads none, when neither the draft nor the live listing says it has one', async () => {
+      readsAre({ draft, publication });
+
+      const { result } = renderData();
+
+      await waitFor(() => expect(result.current.seed).toBeDefined());
+      expect(result.current.seed?.thumbnail).toBeUndefined();
+      expect(api.getMcpProxyApiPortalDraftThumbnail).not.toHaveBeenCalled();
+      expect(api.getMcpProxyApiPortalPublicationThumbnail).not.toHaveBeenCalled();
+    });
+
+    it('does not fall through to the live image when the draft’s own cannot be read, so it is never written over', async () => {
+      readsAre({ draft: { ...draft, ...withImage }, publication: { ...publication, ...withImage } });
+      api.getMcpProxyApiPortalDraftThumbnail.mockRejectedValue(new Error('boom'));
+
+      const { result } = renderData();
+
+      await waitFor(() => expect(result.current.seed).toBeDefined());
+      expect(result.current.seed?.thumbnail).toBeUndefined();
+      expect(result.current.error).toBeUndefined();
+    });
+
+    it('still opens when the live image cannot be read', async () => {
+      readsAre({ draft, publication: { ...publication, ...withImage } });
+      api.getMcpProxyApiPortalPublicationThumbnail.mockRejectedValue(new Error('boom'));
+
+      const { result } = renderData();
+
+      await waitFor(() => expect(result.current.seed).toBeDefined());
+      expect(result.current.seed?.thumbnail).toBeUndefined();
+      expect(result.current.publishedThumbnail).toBeUndefined();
+      expect(result.current.error).toBeUndefined();
+    });
+
+    it('shows the published view the live image whatever the draft holds', async () => {
+      readsAre({ draft: { ...draft, ...withImage }, publication: { ...publication, ...withImage } });
+
+      const { result } = renderData();
+
+      await waitFor(() => expect(result.current.seed).toBeDefined());
+      expect(result.current.publishedThumbnail).toBe(liveImage);
     });
   });
 

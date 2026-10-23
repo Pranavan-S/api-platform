@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { get, getText, post, put, putText, del } from '../../clients/choreoApiClient';
+import { get, getBlob, getText, post, put, putFormData, putText, del } from '../../clients/choreoApiClient';
 import { logger } from '../../utils/logger';
 import { BFF_API_BASE_URL } from '../../paths';
 
@@ -371,6 +371,39 @@ export async function getMcpProxyApiPortalPublicationLandingPage(
   return (await getText(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/publication/landing-page'), baseUrl)).text;
 }
 
+/** The draft's thumbnail; 404 when it has none (`hasThumbnail`). */
+export async function getMcpProxyApiPortalDraftThumbnail(
+  apiPortalId: string,
+  mcpProxyId: string,
+  baseUrl: string
+): Promise<Blob> {
+  return getBlob(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/draft/thumbnail'), baseUrl);
+}
+
+/**
+ * Create or replace the draft's thumbnail, as a multipart `file`. The draft must already
+ * exist or the call is a 404. The server accepts PNG and JPEG, judged by the bytes.
+ */
+export async function saveMcpProxyApiPortalDraftThumbnail(
+  apiPortalId: string,
+  mcpProxyId: string,
+  image: Blob,
+  baseUrl: string
+): Promise<void> {
+  const form = new FormData();
+  form.append('file', image);
+  await putFormData(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/draft/thumbnail'), form, baseUrl);
+}
+
+/** The thumbnail on the live listing; 404 when it has none (`hasThumbnail`). */
+export async function getMcpProxyApiPortalPublicationThumbnail(
+  apiPortalId: string,
+  mcpProxyId: string,
+  baseUrl: string
+): Promise<Blob> {
+  return getBlob(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/publication/thumbnail'), baseUrl);
+}
+
 /** The server's maximum page size for a document list. */
 const DOCUMENTS_PAGE_SIZE = 100;
 
@@ -424,6 +457,9 @@ export const mcpProxiesApis = {
   getMcpProxyApiPortalDraftLandingPage,
   saveMcpProxyApiPortalDraftLandingPage,
   getMcpProxyApiPortalPublicationLandingPage,
+  getMcpProxyApiPortalDraftThumbnail,
+  saveMcpProxyApiPortalDraftThumbnail,
+  getMcpProxyApiPortalPublicationThumbnail,
   listMcpProxyDocuments,
   getMcpProxyDocumentContent,
 };

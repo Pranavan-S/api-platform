@@ -17,8 +17,10 @@
  */
 
 import { useState, type MouseEvent } from 'react';
+import { useRef, type ChangeEvent } from 'react';
 import { defineMessages, FormattedMessage, useIntl } from 'react-intl';
 import {
+  alpha,
   Autocomplete,
   Avatar,
   Box,
@@ -37,7 +39,7 @@ import {
   Tooltip,
   Typography,
 } from '@wso2/oxygen-ui';
-import { Boxes, ChevronDown, Info, List, SquarePen, X } from '@wso2/oxygen-ui-icons-react';
+import { Boxes, Camera, ChevronDown, Info, List, SquarePen, X } from '@wso2/oxygen-ui-icons-react';
 
 import { nameInitials, type DraftFormField, type DraftFormValues, type GatewayUrlOption } from './mcpPublishForm';
 
@@ -86,17 +88,21 @@ const messages = defineMessages({
     id: 'aiWorkspace.pages.appShell.appShellPages.publish.details.description',
     defaultMessage: 'Description',
   },
+  changeThumbnail: {
+    id: 'aiWorkspace.pages.appShell.appShellPages.publish.details.changeThumbnail',
+    defaultMessage: 'Change thumbnail',
+  },
   agentVisibility: {
     id: 'aiWorkspace.pages.appShell.appShellPages.publish.details.agentVisibility',
     defaultMessage: 'Make this MCP proxy discoverable by AI agents',
   },
 });
 
-const MONOGRAM_WIDTH = 72;
-/** Stands in for the Name field's height when the monogram sits on a row of its own. */
-const MONOGRAM_MIN_HEIGHT = 64;
-const MONOGRAM_FONT_SIZE = 28;
-const MONOGRAM_ICON_SIZE = 24;
+const THUMBNAIL_WIDTH = 72;
+/** Stands in for the Name field's height when the thumbnail sits on a row of its own. */
+const THUMBNAIL_MIN_HEIGHT = 64;
+const THUMBNAIL_FONT_SIZE = 28;
+const THUMBNAIL_ICON_SIZE = 24;
 
 /** Each field's validation message, already worded for the user. */
 type FieldErrorText = Partial<Record<DraftFormField, string>>;
@@ -108,8 +114,12 @@ export type McpProxyDetailsTabProps = {
   readOnly?: boolean;
   onBlurField?: (field: DraftFormField) => void;
   onChange?: (values: DraftFormValues) => void;
+  /** Called with the image picked as the new thumbnail; without it the thumbnail is read-only. */
+  onThumbnailPick?: (file: File) => void;
   /** URLs the Production URL can be picked from; any other URL can still be typed. */
   productionUrlOptions?: GatewayUrlOption[];
+  /** The thumbnail to show; the proxy name's monogram stands in without one. */
+  thumbnailUrl?: string;
   values: DraftFormValues;
 };
 
@@ -275,8 +285,30 @@ function UrlField({
   );
 }
 
-/** The proxy name's monogram, standing in for the thumbnail the listing will carry once it is set. */
-function Monogram({ displayName }: { displayName: string }) {
+type ThumbnailProps = {
+  disabled?: boolean;
+  displayName: string;
+  onPick?: (file: File) => void;
+  url?: string;
+};
+
+/**
+ * The proxy's portal thumbnail (the name's monogram stands in without an image). With
+ * `onPick`, hovering or focusing it offers a replacement picker; the choice is only
+ * reported, not stored.
+ */
+function Thumbnail({ disabled, displayName, onPick, url }: ThumbnailProps) {
+  const intl = useIntl();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const editable = Boolean(onPick) && !disabled;
+
+  const handleFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Cleared so choosing the same file again still fires a change.
+    event.target.value = '';
+    if (file) onPick?.(file);
+  };
+
   return (
     <Box
       sx={{
@@ -284,23 +316,68 @@ function Monogram({ displayName }: { displayName: string }) {
         // Fills the row's height, label to input, less the reserved error line under the input.
         display: 'flex',
         mb: ERROR_LINE_HEIGHT,
-        minHeight: MONOGRAM_MIN_HEIGHT,
-        width: MONOGRAM_WIDTH,
+        minHeight: THUMBNAIL_MIN_HEIGHT,
+        position: 'relative',
+        width: THUMBNAIL_WIDTH,
+        '&:hover .thumbnail-overlay, &:focus-within .thumbnail-overlay': { opacity: 1 },
       }}
     >
       <Avatar
         alt={displayName}
-        sx={{ bgcolor: 'primary.light', color: 'primary.contrastText', fontSize: MONOGRAM_FONT_SIZE, height: 'auto', width: '100%' }}
+        imgProps={{ style: { objectFit: 'contain' } }}
+        src={url}
+        sx={{
+          bgcolor: url ? 'background.paper' : 'primary.light',
+          color: 'primary.contrastText',
+          fontSize: THUMBNAIL_FONT_SIZE,
+          height: 'auto',
+          width: '100%',
+        }}
         variant="rounded"
       >
-        {nameInitials(displayName) || <Boxes size={MONOGRAM_ICON_SIZE} />}
+        {nameInitials(displayName) || <Boxes size={THUMBNAIL_ICON_SIZE} />}
       </Avatar>
+      {editable && (
+        <>
+          <Box
+            className="thumbnail-overlay"
+            sx={(theme) => ({
+              alignItems: 'center',
+              bgcolor: alpha(theme.palette.common.black, 0.5),
+              borderRadius: 1,
+              display: 'flex',
+              inset: 0,
+              justifyContent: 'center',
+              opacity: 0,
+              position: 'absolute',
+              transition: 'opacity 150ms ease',
+            })}
+          >
+            <IconButton
+              aria-label={intl.formatMessage(messages.changeThumbnail)}
+              onClick={() => inputRef.current?.click()}
+              size="small"
+              sx={{ color: 'common.white' }}
+            >
+              <Camera size={THUMBNAIL_ICON_SIZE} />
+            </IconButton>
+          </Box>
+          <Box
+            accept="image/png,image/jpeg"
+            component="input"
+            onChange={handleFile}
+            ref={inputRef}
+            sx={{ display: 'none' }}
+            type="file"
+          />
+        </>
+      )}
     </Box>
   );
 }
 
 /**
- * "MCP Proxy Details": the name's monogram, name, version, description, the two
+ * "MCP Proxy Details": thumbnail, name, version, description, the two
  * endpoint URLs and agent visibility in a single card.
  */
 export function McpProxyDetailsTab({
@@ -308,8 +385,10 @@ export function McpProxyDetailsTab({
   errors = {},
   onBlurField,
   onChange,
+  onThumbnailPick,
   productionUrlOptions = [],
   readOnly,
+  thumbnailUrl,
   values,
 }: McpProxyDetailsTabProps) {
   const intl = useIntl();
@@ -335,7 +414,12 @@ export function McpProxyDetailsTab({
       <Stack spacing={1}>
         <Grid container spacing={2}>
           <Grid size={{ md: 'auto', xs: 12 }} sx={{ display: 'flex' }}>
-            <Monogram displayName={values.displayName} />
+            <Thumbnail
+              disabled={disabled}
+              displayName={values.displayName}
+              onPick={readOnly ? undefined : onThumbnailPick}
+              url={thumbnailUrl}
+            />
           </Grid>
           <Grid size={{ md: 'grow', xs: 12 }}>
             <DetailField {...fieldProps('displayName', 'publicationDisplayName', intl.formatMessage(messages.name))} required />

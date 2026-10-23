@@ -23,10 +23,12 @@ import { mcpProxiesApis } from '../../../../apis/MCP/mcpProxiesApis';
 import { usePublishAssets } from './usePublishAssets';
 
 vi.mock('../../../../apis/MCP/mcpProxiesApis', () => ({
-  mcpProxiesApis: { saveMcpProxyApiPortalDraftLandingPage: vi.fn() },
+  mcpProxiesApis: { saveMcpProxyApiPortalDraftLandingPage: vi.fn(), saveMcpProxyApiPortalDraftThumbnail: vi.fn() },
 }));
 
+const saveThumbnail = vi.mocked(mcpProxiesApis.saveMcpProxyApiPortalDraftThumbnail);
 const saveLandingPage = vi.mocked(mcpProxiesApis.saveMcpProxyApiPortalDraftLandingPage);
+const image = (name: string) => new Blob([name], { type: 'image/png' });
 
 const open = (seed: Parameters<ReturnType<typeof usePublishAssets>['seed']>[0] = {}) => {
   const hook = renderHook(() => usePublishAssets('hub', 'travel'));
@@ -35,7 +37,82 @@ const open = (seed: Parameters<ReturnType<typeof usePublishAssets>['seed']>[0] =
 };
 
 beforeEach(() => {
+  saveThumbnail.mockReset().mockResolvedValue(undefined);
   saveLandingPage.mockReset().mockResolvedValue(undefined);
+});
+
+describe('usePublishAssets thumbnail', () => {
+  it('has none until one is seeded or picked', () => {
+    const { result } = open();
+
+    expect(result.current.thumbnail).toBeUndefined();
+    expect(result.current.hasUnsavedChanges).toBe(false);
+  });
+
+  it('opens on the seeded thumbnail, which is not an edit', () => {
+    const blob = image('a');
+    const { result } = open({ thumbnail: { blob, inDraft: false } });
+
+    expect(result.current.thumbnail).toBe(blob);
+    expect(result.current.hasUnsavedChanges).toBe(false);
+  });
+
+  it('saves nothing when there is no thumbnail, or the draft already stores the one shown', async () => {
+    const empty = open();
+    await act(() => empty.result.current.saveThumbnail());
+    const stored = open({ thumbnail: { blob: image('a'), inDraft: true } });
+    await act(() => stored.result.current.saveThumbnail());
+
+    expect(saveThumbnail).not.toHaveBeenCalled();
+  });
+
+  it('sends a thumbnail the draft does not store yet, even one pre-filled from the live listing', async () => {
+    const blob = image('live');
+    const { result } = open({ thumbnail: { blob, inDraft: false } });
+
+    await act(() => result.current.saveThumbnail());
+
+    expect(saveThumbnail).toHaveBeenCalledWith('hub', 'travel', blob, expect.any(String));
+  });
+
+  it('counts a picked image as an edit until it is saved, and sends it only once', async () => {
+    const { result } = open({ thumbnail: { blob: image('a'), inDraft: true } });
+    act(() => result.current.setThumbnail(image('b')));
+    expect(result.current.hasUnsavedChanges).toBe(true);
+
+    await act(() => result.current.saveThumbnail());
+    expect(saveThumbnail).toHaveBeenCalledTimes(1);
+    expect(result.current.hasUnsavedChanges).toBe(false);
+
+    await act(() => result.current.saveThumbnail());
+    expect(saveThumbnail).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops an image the server refuses for the last saved one, and reports the failure', async () => {
+    const saved = image('a');
+    const { result } = open({ thumbnail: { blob: saved, inDraft: true } });
+    act(() => result.current.setThumbnail(image('bad')));
+    saveThumbnail.mockRejectedValue(new Error('unsupported'));
+
+    await act(async () => {
+      await expect(result.current.saveThumbnail()).rejects.toThrow('unsupported');
+    });
+
+    expect(result.current.thumbnail).toBe(saved);
+    expect(result.current.hasUnsavedChanges).toBe(false);
+  });
+
+  it('drops a refused first image to nothing, when there was no saved one to go back to', async () => {
+    const { result } = open();
+    act(() => result.current.setThumbnail(image('bad')));
+    saveThumbnail.mockRejectedValue(new Error('unsupported'));
+
+    await act(async () => {
+      await expect(result.current.saveThumbnail()).rejects.toThrow('unsupported');
+    });
+
+    expect(result.current.thumbnail).toBeUndefined();
+  });
 });
 
 describe('usePublishAssets landing page', () => {

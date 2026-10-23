@@ -49,7 +49,7 @@ const renderTab = (props: Partial<McpProxyDetailsTabProps> = {}) => {
 };
 
 describe('McpProxyDetailsTab', () => {
-  it('shows every value, with the name’s monogram standing in for a thumbnail', () => {
+  it('shows every value, with the name’s monogram standing in until there is a thumbnail', () => {
     renderTab();
 
     expect(screen.getByLabelText(/^Name/)).toHaveValue('Travel MCP');
@@ -203,6 +203,51 @@ describe('McpProxyDetailsTab', () => {
 
       expect(screen.getByLabelText('Description')).not.toHaveAttribute('placeholder');
     });
+  });
+
+  it('shows the thumbnail image in place of the monogram when there is one', () => {
+    renderTab({ thumbnailUrl: 'blob:test/1' });
+
+    expect(screen.getByRole('img', { name: 'Travel MCP' })).toHaveAttribute('src', 'blob:test/1');
+    expect(screen.queryByText('TR')).not.toBeInTheDocument();
+  });
+
+  it('reports the image picked to replace the thumbnail, and lets the same one be picked again', async () => {
+    const onThumbnailPick = vi.fn();
+    const { container, user } = renderTab({ onThumbnailPick });
+    const picker = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const image = new File(['png'], 'logo.png', { type: 'image/png' });
+
+    expect(screen.getByRole('button', { name: 'Change thumbnail' })).toBeInTheDocument();
+    expect(picker).toHaveAttribute('accept', 'image/png,image/jpeg');
+
+    await user.upload(picker, image);
+    expect(onThumbnailPick).toHaveBeenLastCalledWith(image);
+
+    await user.upload(picker, image);
+    expect(onThumbnailPick).toHaveBeenCalledTimes(2);
+  });
+
+  it('opens the file picker from the button', async () => {
+    const { container, user } = renderTab({ onThumbnailPick: vi.fn() });
+    const picker = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const click = vi.spyOn(picker, 'click');
+
+    await user.click(screen.getByRole('button', { name: 'Change thumbnail' }));
+
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not offer to change the thumbnail when it is read-only, disabled or has no handler', () => {
+    const onThumbnailPick = vi.fn();
+    const { rerender } = renderWithProviders(<McpProxyDetailsTab onThumbnailPick={onThumbnailPick} readOnly values={values} />);
+    expect(screen.queryByRole('button', { name: 'Change thumbnail' })).not.toBeInTheDocument();
+
+    rerender(<McpProxyDetailsTab disabled onThumbnailPick={onThumbnailPick} values={values} />);
+    expect(screen.queryByRole('button', { name: 'Change thumbnail' })).not.toBeInTheDocument();
+
+    rerender(<McpProxyDetailsTab values={values} />);
+    expect(screen.queryByRole('button', { name: 'Change thumbnail' })).not.toBeInTheDocument();
   });
 
   it('shows an icon instead of initials when the name has no letters yet', () => {

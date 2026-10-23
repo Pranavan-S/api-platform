@@ -20,10 +20,10 @@ import { useCallback, useState } from 'react';
 
 import { mcpProxiesApis } from '../../../../apis/MCP/mcpProxiesApis';
 import { PLATFORM_API_BASE_URL } from '../../../../paths';
-import type { LandingPageSeed } from './usePublishPageData';
+import type { LandingPageSeed, ThumbnailSeed } from './usePublishPageData';
 
 /** What the page opened with, from the freshest tier that has each part. */
-type AssetsSeed = { landingPage?: LandingPageSeed; landingPageFailed?: boolean };
+type AssetsSeed = { landingPage?: LandingPageSeed; landingPageFailed?: boolean; thumbnail?: ThumbnailSeed };
 
 /**
  * The parts of a listing that are saved on their own, apart from its details and
@@ -34,6 +34,11 @@ type AssetsSeed = { landingPage?: LandingPageSeed; landingPageFailed?: boolean }
  * still sent, since the draft has to hold it to publish it.
  */
 export function usePublishAssets(apiPortalId: string, mcpProxyId: string) {
+  const [thumbnail, setThumbnail] = useState<Blob>();
+  // The draft's own thumbnail, and the one the page last treated as saved.
+  const [storedThumbnail, setStoredThumbnail] = useState<Blob>();
+  const [savedThumbnail, setSavedThumbnail] = useState<Blob>();
+
   // The landing page's Markdown, the draft's own, and the one the page last treated as saved;
   // `undefined` until one exists.
   const [landingPage, setLandingPage] = useState<string>();
@@ -46,11 +51,30 @@ export function usePublishAssets(apiPortalId: string, mcpProxyId: string) {
 
   /** Takes what the page opened with. */
   const seed = useCallback((opened: AssetsSeed) => {
+    setThumbnail(opened.thumbnail?.blob);
+    setStoredThumbnail(opened.thumbnail?.inDraft ? opened.thumbnail.blob : undefined);
+    setSavedThumbnail(opened.thumbnail?.blob);
     setLandingPage(opened.landingPage?.text);
     setStoredLandingPage(opened.landingPage?.inDraft ? opened.landingPage.text : undefined);
     setSavedLandingPage(opened.landingPage?.text);
     setLandingPageFailed(Boolean(opened.landingPageFailed));
   }, []);
+
+  /**
+   * Saves the thumbnail alone, unless the draft already stores the one shown. An image the
+   * server refuses is dropped for the last saved one, so it can't fail every later save.
+   */
+  const saveThumbnail = async () => {
+    if (!thumbnail || thumbnail === storedThumbnail) return;
+    try {
+      await mcpProxiesApis.saveMcpProxyApiPortalDraftThumbnail(apiPortalId, mcpProxyId, thumbnail, PLATFORM_API_BASE_URL);
+    } catch (error) {
+      setThumbnail(savedThumbnail);
+      throw error;
+    }
+    setStoredThumbnail(thumbnail);
+    setSavedThumbnail(thumbnail);
+  };
 
   /** Saves the landing page alone, unless the draft already stores the one shown. */
   const saveLandingPage = async () => {
@@ -69,11 +93,14 @@ export function usePublishAssets(apiPortalId: string, mcpProxyId: string) {
   return {
     createLandingPage,
     generatedLandingPage: generatedLandingPage !== undefined && landingPage === generatedLandingPage,
-    hasUnsavedChanges: landingPage !== savedLandingPage,
+    hasUnsavedChanges: thumbnail !== savedThumbnail || landingPage !== savedLandingPage,
     landingPage,
     landingPageFailed,
     saveLandingPage,
+    saveThumbnail,
     seed,
     setLandingPage,
+    setThumbnail,
+    thumbnail,
   };
 }

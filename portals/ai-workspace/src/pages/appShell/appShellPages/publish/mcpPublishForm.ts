@@ -69,6 +69,14 @@ export const publishFormMessages = defineMessages({
     id: 'aiWorkspace.pages.appShell.appShellPages.publish.form.urlInvalid',
     defaultMessage: 'Enter a full URL, for example https://mcp.example.com.',
   },
+  thumbnailType: {
+    id: 'aiWorkspace.pages.appShell.appShellPages.publish.form.thumbnailType',
+    defaultMessage: 'Only JPEG and PNG images are supported.',
+  },
+  thumbnailSize: {
+    id: 'aiWorkspace.pages.appShell.appShellPages.publish.form.thumbnailSize',
+    defaultMessage: 'The image must be 2 MB or smaller.',
+  },
   definitionInvalidJson: {
     id: 'aiWorkspace.pages.appShell.appShellPages.publish.form.definitionInvalidJson',
     defaultMessage: 'This is not valid JSON: {detail}',
@@ -210,6 +218,17 @@ export const validateDraftFormValues = (values: DraftFormValues): FormFieldError
   const sandboxUrl = values.sandboxUrl.trim();
   if (sandboxUrl !== '' && !isHttpUrl(sandboxUrl)) errors.sandboxUrl = urlMessage;
   return errors;
+};
+
+const THUMBNAIL_TYPES: readonly string[] = ['image/jpeg', 'image/png'];
+/** The server's default cap on a draft thumbnail (`publication_thumbnail_max_bytes`), checked before uploading. */
+const THUMBNAIL_MAX_BYTES = 2 * 1024 * 1024;
+
+/** Why a picked image can't be the thumbnail, or `undefined`. The server re-checks the type from the bytes. */
+export const validateThumbnailFile = (file: Pick<File, 'size' | 'type'>): MessageDescriptor | undefined => {
+  if (!THUMBNAIL_TYPES.includes(file.type)) return publishFormMessages.thumbnailType;
+  if (file.size > THUMBNAIL_MAX_BYTES) return publishFormMessages.thumbnailSize;
+  return undefined;
 };
 
 /** What the listing advertises: tools, resources and prompts, and anything else the server keeps with them. */

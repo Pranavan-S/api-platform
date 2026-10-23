@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { handleUnauthorizedResponse } from '../auth/logout';
 import { CSRF_HEADER, CSRF_VALUE } from '../config.env';
-import { getText, putText } from './choreoApiClient';
+import { getBlob, getText, putFormData, putText } from './choreoApiClient';
 
 vi.mock('../auth/logout', () => ({ handleUnauthorizedResponse: vi.fn() }));
 vi.mock('../utils/logger', () => ({
@@ -113,6 +113,53 @@ describe('putText', () => {
     await expect(putText('/x', 'text', 'text/markdown', BASE)).rejects.toMatchObject({
       status: 404,
       code: 'DRAFT_NOT_FOUND',
+    });
+  });
+});
+
+describe('getBlob', () => {
+  it('reads the body as bytes that keep the content type they were stored under', async () => {
+    fetchMock.mockResolvedValue(new Response(new Uint8Array([137, 80, 78, 71]), { status: 200, headers: { 'Content-Type': 'image/png' } }));
+
+    const blob = await getBlob('/draft/thumbnail', BASE);
+
+    expect(blob.type).toBe('image/png');
+    expect(blob.size).toBe(4);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`${BASE}/draft/thumbnail`);
+    expect(init).toMatchObject({ method: 'GET', credentials: 'include' });
+    expect(init.headers[CSRF_HEADER]).toBe(CSRF_VALUE);
+  });
+
+  it('throws the API error a failed response describes, so a missing thumbnail can be told from a bad one', async () => {
+    fetchMock.mockResolvedValue(failure(404, { code: 'NOT_FOUND', message: 'no thumbnail' }));
+
+    await expect(getBlob('/x', BASE)).rejects.toMatchObject({ status: 404, code: 'NOT_FOUND' });
+    expect(handleUnauthorizedResponse).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('putFormData', () => {
+  it('sends the form as it is, leaving the multipart boundary to the browser, and resolves on an empty (204) answer', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    const form = new FormData();
+    form.append('file', new Blob(['png'], { type: 'image/png' }), 'logo.png');
+
+    await expect(putFormData('/draft/thumbnail', form, BASE)).resolves.toBeUndefined();
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`${BASE}/draft/thumbnail`);
+    expect(init).toMatchObject({ method: 'PUT', credentials: 'include', body: form });
+    expect(init.headers).not.toHaveProperty('Content-Type');
+    expect(init.headers[CSRF_HEADER]).toBe(CSRF_VALUE);
+  });
+
+  it('throws the API error a refusal describes', async () => {
+    fetchMock.mockResolvedValue(failure(400, { code: 'PUBLICATION_VALIDATION_FAILED', message: 'unsupported image' }));
+
+    await expect(putFormData('/x', new FormData(), BASE)).rejects.toMatchObject({
+      status: 400,
+      code: 'PUBLICATION_VALIDATION_FAILED',
     });
   });
 });

@@ -18,13 +18,15 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { get, getText, post, put, putText } from '../../clients/choreoApiClient';
+import { get, getBlob, getText, post, put, putFormData, putText } from '../../clients/choreoApiClient';
 import {
   deprecateMcpProxyOnApiPortal,
   getMcpProxyApiPortalDraftDefinition,
   getMcpProxyApiPortalDraftLandingPage,
+  getMcpProxyApiPortalDraftThumbnail,
   getMcpProxyApiPortalPublicationDefinition,
   getMcpProxyApiPortalPublicationLandingPage,
+  getMcpProxyApiPortalPublicationThumbnail,
   getMcpProxyDocumentContent,
   listMcpProxyApiPortalPublications,
   listMcpProxyDocuments,
@@ -33,13 +35,16 @@ import {
   saveMcpProxyApiPortalDraft,
   saveMcpProxyApiPortalDraftDefinition,
   saveMcpProxyApiPortalDraftLandingPage,
+  saveMcpProxyApiPortalDraftThumbnail,
 } from './mcpProxiesApis';
 
 vi.mock('../../clients/choreoApiClient', () => ({
   get: vi.fn(),
+  getBlob: vi.fn(),
   getText: vi.fn(),
   post: vi.fn(),
   put: vi.fn(),
+  putFormData: vi.fn(),
   putText: vi.fn(),
   del: vi.fn(),
 }));
@@ -58,6 +63,8 @@ beforeEach(() => {
   vi.mocked(post).mockReset();
   vi.mocked(put).mockReset();
   vi.mocked(getText).mockReset();
+  vi.mocked(getBlob).mockReset();
+  vi.mocked(putFormData).mockReset();
   vi.mocked(putText).mockReset();
 });
 
@@ -219,6 +226,43 @@ describe('the landing page', () => {
   });
 });
 
+describe('the thumbnail', () => {
+  const image = new Blob(['png'], { type: 'image/png' });
+
+  it('is read from the draft', async () => {
+    vi.mocked(getBlob).mockResolvedValue(image);
+
+    expect(await getMcpProxyApiPortalDraftThumbnail(HUB, PROXY, BASE)).toBe(image);
+    expect(getBlob).toHaveBeenCalledWith(`${PORTAL_PATH}/draft/thumbnail`, BASE);
+  });
+
+  it('is read from the live listing', async () => {
+    vi.mocked(getBlob).mockResolvedValue(image);
+
+    expect(await getMcpProxyApiPortalPublicationThumbnail(HUB, PROXY, BASE)).toBe(image);
+    expect(getBlob).toHaveBeenCalledWith(`${PORTAL_PATH}/publication/thumbnail`, BASE);
+  });
+
+  it('is saved to the draft as the multipart file the server expects', async () => {
+    vi.mocked(putFormData).mockResolvedValue(undefined);
+
+    await saveMcpProxyApiPortalDraftThumbnail(HUB, PROXY, image, BASE);
+
+    const [path, form, base] = vi.mocked(putFormData).mock.calls[0];
+    expect(path).toBe(`${PORTAL_PATH}/draft/thumbnail`);
+    expect(base).toBe(BASE);
+    expect((form.get('file') as File).size).toBe(image.size);
+    expect([...form.keys()]).toEqual(['file']);
+  });
+
+  it('lets a missing thumbnail surface as the error, for the caller to read as "none saved"', async () => {
+    const notFound = Object.assign(new Error('not found'), { status: 404 });
+    vi.mocked(getBlob).mockRejectedValue(notFound);
+
+    await expect(getMcpProxyApiPortalDraftThumbnail(HUB, PROXY, BASE)).rejects.toBe(notFound);
+  });
+});
+
 describe('getMcpProxyDocumentContent', () => {
   it('reads one document’s body with the content type it was stored under, escaping both ids', async () => {
     const body = { text: '# Setup', contentType: 'text/markdown; charset=utf-8' };
@@ -248,6 +292,9 @@ describe('mcpProxiesApis', () => {
       getMcpProxyApiPortalDraftLandingPage: expect.any(Function),
       saveMcpProxyApiPortalDraftLandingPage: expect.any(Function),
       getMcpProxyApiPortalPublicationLandingPage: expect.any(Function),
+      getMcpProxyApiPortalDraftThumbnail: expect.any(Function),
+      saveMcpProxyApiPortalDraftThumbnail: expect.any(Function),
+      getMcpProxyApiPortalPublicationThumbnail: expect.any(Function),
     });
   });
 });
