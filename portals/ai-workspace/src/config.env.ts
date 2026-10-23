@@ -147,6 +147,10 @@ const FEATURE_FLAGS = {
     'APIP_AIW_FEATURE_FLAGS_AGENT_PROXY_ENABLED',
     false
   ),
+  'managed-api-portals': getEnvOrDefault(
+    'APIP_AIW_FEATURE_FLAGS_MANAGED_API_PORTALS_ENABLED',
+    false
+  ),
 };
 
 export type FeatureId = keyof typeof FEATURE_FLAGS;
@@ -154,6 +158,10 @@ export type FeatureId = keyof typeof FEATURE_FLAGS;
 export function isFeatureEnabled(feature: FeatureId): boolean {
   return FEATURE_FLAGS[feature];
 }
+
+// The hub list and per-hub publish pages exist only where the deployment manages its
+// own API Portals; they replace the single-portal dialog that API_PORTAL_ENABLED turns on.
+export const MULTI_HUB_PUBLISHING = isFeatureEnabled('managed-api-portals');
 
 // The single API Portal MCP proxies publish to. Hardcoded stand-in until
 // proper Dev Portal selection support is added — not yet operator-configurable.

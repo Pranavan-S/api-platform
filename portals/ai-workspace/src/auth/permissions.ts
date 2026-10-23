@@ -173,6 +173,7 @@ export const SCOPES = {
   MCP_PROXY_DEPLOYMENT_MANAGE: 'ap:mcp_proxy:deployment:manage',
   MCP_PROXY_API_PORTAL_PUBLISH:   'ap:api_portal:mcp_proxy:publish',
   MCP_PROXY_API_PORTAL_UNPUBLISH: 'ap:api_portal:mcp_proxy:unpublish',
+  MCP_PROXY_API_PORTAL_DEPRECATE: 'ap:api_portal:mcp_proxy:deprecate',
   MCP_PROXY_API_PORTAL_MANAGE:    'ap:api_portal:mcp_proxy:manage',
 
   // Agent Proxies

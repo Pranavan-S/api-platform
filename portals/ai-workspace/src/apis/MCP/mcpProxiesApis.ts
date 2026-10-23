@@ -28,6 +28,7 @@ import type {
   Publication,
   PublicationDraftDetails,
   PublicationDraftDetailsInput,
+  PublicationSummaryResponse,
 } from '../../utils/types';
 
 // ============================================================================
@@ -245,6 +246,100 @@ export async function unpublishMcpProxyFromApiPortal(
   await post<void>(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/unpublish'), undefined, baseUrl);
 }
 
+/** The server's maximum page size for a publication list. */
+const PUBLICATIONS_PAGE_SIZE = 100;
+
+/**
+ * Every API Portal registered in the organization, each annotated with this MCP
+ * proxy's publication status on it (`GET /api-publications`). An organization with
+ * no portals gets an empty list, not an error.
+ *
+ * Scope: `ap:api_publication:read`.
+ */
+export async function listMcpProxyApiPortalPublications(
+  mcpProxyId: string,
+  baseUrl: string
+): Promise<PublicationSummaryResponse> {
+  return get<PublicationSummaryResponse>(
+    '/api-publications',
+    { apiType: MCP_PROXY_API_TYPE, apiId: mcpProxyId, limit: PUBLICATIONS_PAGE_SIZE },
+    baseUrl
+  );
+}
+
+/**
+ * Replace the publication draft wholesale, creating it on first save.
+ *
+ * Unlike `publishMcpProxyToApiPortal` this does not publish: the page saves the
+ * draft and its definition separately, then publishes what the draft holds.
+ */
+export async function saveMcpProxyApiPortalDraft(
+  apiPortalId: string,
+  mcpProxyId: string,
+  draft: PublicationDraftDetailsInput,
+  baseUrl: string
+): Promise<PublicationDraftDetails> {
+  return put<PublicationDraftDetails>(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/draft'), draft, baseUrl);
+}
+
+/**
+ * Store the MCP definition (the tools, resources and prompts the listing
+ * advertises) on an existing draft. Sent as `application/json`; the draft must
+ * already have been saved or the call is a 404.
+ */
+export async function saveMcpProxyApiPortalDraftDefinition(
+  apiPortalId: string,
+  mcpProxyId: string,
+  definition: Record<string, unknown>,
+  baseUrl: string
+): Promise<void> {
+  await put<void>(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/draft/definition'), definition, baseUrl);
+}
+
+/** The definition stored on the draft; 404 when the draft has not stored one. */
+export async function getMcpProxyApiPortalDraftDefinition(
+  apiPortalId: string,
+  mcpProxyId: string,
+  baseUrl: string
+): Promise<Record<string, unknown>> {
+  return get<Record<string, unknown>>(
+    mcpProxyPortalPath(apiPortalId, mcpProxyId, '/draft/definition'),
+    undefined,
+    baseUrl
+  );
+}
+
+/** The definition stored on the live listing; 404 when the listing has none. */
+export async function getMcpProxyApiPortalPublicationDefinition(
+  apiPortalId: string,
+  mcpProxyId: string,
+  baseUrl: string
+): Promise<Record<string, unknown>> {
+  return get<Record<string, unknown>>(
+    mcpProxyPortalPath(apiPortalId, mcpProxyId, '/publication/definition'),
+    undefined,
+    baseUrl
+  );
+}
+
+/** Publish the saved draft. Takes no body; 201 on a first publish, 200 on a refresh. */
+export async function publishSavedMcpProxyDraft(
+  apiPortalId: string,
+  mcpProxyId: string,
+  baseUrl: string
+): Promise<Publication> {
+  return post<Publication>(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/publish'), undefined, baseUrl);
+}
+
+/** Mark the live listing as deprecated. Valid only while it is published. */
+export async function deprecateMcpProxyOnApiPortal(
+  apiPortalId: string,
+  mcpProxyId: string,
+  baseUrl: string
+): Promise<Publication> {
+  return post<Publication>(mcpProxyPortalPath(apiPortalId, mcpProxyId, '/deprecate'), undefined, baseUrl);
+}
+
 export const mcpProxiesApis = {
   createMCPServer,
   getMCPServers,
@@ -255,4 +350,11 @@ export const mcpProxiesApis = {
   getMcpProxyApiPortalDraft,
   publishMcpProxyToApiPortal,
   unpublishMcpProxyFromApiPortal,
+  listMcpProxyApiPortalPublications,
+  saveMcpProxyApiPortalDraft,
+  saveMcpProxyApiPortalDraftDefinition,
+  getMcpProxyApiPortalDraftDefinition,
+  getMcpProxyApiPortalPublicationDefinition,
+  publishSavedMcpProxyDraft,
+  deprecateMcpProxyOnApiPortal,
 };
