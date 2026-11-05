@@ -30,8 +30,9 @@ import (
 // portalContentFileName must end in .zip, or the portal refuses the upload.
 const portalContentFileName = "content.zip"
 
-// PublishContent implements PortalPublisher with PUT on the listing's /assets. The portal only
-// adds or replaces files, so the call is safe to repeat.
+// PublishContent implements PortalPublisher with PUT on the listing's /assets, which replaces the
+// listing's content, so the call is safe to repeat. Older portals reject an empty archive with
+// 400; there it means the listing had nothing to clear, so it counts as done.
 func (p *HTTPPortalPublisher) PublishContent(ctx context.Context, portal *model.APIPortal, apiType, apiHandle string, content *PortalContent) error {
 	listing, err := portalListingFor(apiType)
 	if err != nil {
@@ -62,6 +63,8 @@ func (p *HTTPPortalPublisher) PublishContent(ctx context.Context, portal *model.
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	case content.Empty && resp.StatusCode == http.StatusBadRequest:
 		return nil
 	case isPortalAuthFailure(resp.StatusCode):
 		return portalAuthError(resp.StatusCode)
