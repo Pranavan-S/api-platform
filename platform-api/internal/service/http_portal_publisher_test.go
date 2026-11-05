@@ -1074,6 +1074,44 @@ func TestHTTPPortalPublisher_PublishContent_ErrorMapping(t *testing.T) {
 	}
 }
 
+// An older portal rejects an empty archive with 400; that only means there was nothing to
+// clear. Any other answer to an empty archive keeps the usual mapping.
+func TestHTTPPortalPublisher_PublishContent_EmptyArchive(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   int
+		wantErr  bool
+		wantAuth bool
+	}{
+		{"accepted", http.StatusOK, false, false},
+		{"rejected by an older portal", http.StatusBadRequest, false, false},
+		{"rejected credential", http.StatusUnauthorized, true, true},
+		{"forbidden", http.StatusForbidden, true, true},
+		{"listing missing", http.StatusNotFound, true, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+			}))
+			defer srv.Close()
+			p := newTestHTTPPortalPublisher(t, "key")
+
+			err := p.PublishContent(context.Background(), &model.APIPortal{URL: srv.URL}, constants.PublicationAPITypeRestAPI, "my-api", &PortalContent{Archive: []byte("zip"), Empty: true})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("want error=%v, got %v", tc.wantErr, err)
+			}
+			var conflict *PortalConflictError
+			if tc.wantErr && !tc.wantAuth && !errors.As(err, &conflict) {
+				t.Fatalf("want a portal rejection, got %v", err)
+			}
+			if tc.wantAuth && errors.As(err, &conflict) {
+				t.Fatalf("want an auth failure, got a rejection: %v", err)
+			}
+		})
+	}
+}
+
 func TestHTTPPortalPublisher_PublishContent_FailuresBeforeAResponseAreNotRejections(t *testing.T) {
 	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	closed.Close()
