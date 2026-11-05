@@ -75,10 +75,31 @@ test('a single wrapper folder is unwrapped', async () => {
     assert.deepStrictEqual(names(items), ['DOC_Other:A.md']);
 });
 
+test('an unknown top-level entry is rejected and named', async () => {
+    await assert.rejects(read([{ name: 'docs/A.md', content: '# A' }, { name: 'doc/B.md', content: '# B' }]),
+        { name: 'ValidationError', message: 'Unknown top-level entry in content ZIP: doc/' });
+});
+
+test('OS-generated entries are ignored', async () => {
+    const items = await read([
+        { name: 'docs/A.md', content: '# A' },
+        { name: '__MACOSX/docs/._A.md', content: 'x' },
+        { name: '.DS_Store', content: 'x' },
+    ]);
+    assert.deepStrictEqual(names(items), ['DOC_Other:A.md']);
+});
+
 test('an upload with neither web/ nor docs/ is empty for a replace and rejected for an add', async () => {
     assert.deepStrictEqual(await read([{ name: 'content/', content: '' }], { allowEmpty: true }), []);
     await assert.rejects(read([{ name: 'content/', content: '' }]),
         { name: 'ValidationError', message: 'Content ZIP must contain web/ or docs/ at the top level' });
+});
+
+test('a file that is not a ZIP is rejected naming the content field', async () => {
+    await assert.rejects(extractApiContentFromUploadedZip({ originalname: 'a.txt', buffer: Buffer.from('x') }, 'o', 'a'),
+        { name: 'ValidationError', message: 'content must be a .zip file' });
+    await assert.rejects(extractApiContentFromUploadedZip(undefined, 'o', 'a'),
+        { name: 'ValidationError', message: 'Missing required file: content' });
 });
 
 function call(handler, { body = {}, query = {}, content } = {}) {
@@ -147,6 +168,19 @@ test('add rejects an upload with nothing the portal stores, and stores nothing',
     assert.strictEqual(stored.mock.callCount(), 0);
 });
 
+test('an image named in imageMetadata fills that slot, not its file-name slot', async (t) => {
+    knownApi(t);
+    t.mock.method(apiFileDao, 'findExisting', async () => []);
+    const stored = t.mock.method(apiFileDao, 'storeMany', async () => []);
+    const res = await call(createAPIContent, {
+        content: zipUpload([{ name: 'web/pets-logo.png', content: 'png' }, { name: 'web/diagram.png', content: 'png' }]),
+        body: { imageMetadata: JSON.stringify({ 'api-icon': 'pets-logo.png' }) },
+    });
+    assert.strictEqual(res.status, 201);
+    const slots = Object.fromEntries(stored.mock.calls[0].arguments[0].map((item) => [item.fileName, item.key]));
+    assert.deepStrictEqual(slots, { 'pets-logo.png': 'api-icon', 'diagram.png': 'diagram' });
+});
+
 test('add rejects two links with the same name in one upload', async (t) => {
     knownApi(t);
     const link = { displayName: 'Guide', url: 'https://example.com' };
@@ -160,6 +194,19 @@ test('add rejects two links with the same name in one upload', async (t) => {
 
 test('a replace accepts a ZIP with no entries at all', async () => {
     assert.deepStrictEqual(await read([], { allowEmpty: true }), []);
+});
+
+test('add and replace reject metadata that is not JSON with a 400 naming the field', async (t) => {
+    knownApi(t);
+    const content = zipUpload([{ name: 'docs/A.md', content: '# A' }]);
+    for (const handler of [createAPIContent, updateAPIContent]) {
+        const doc = await call(handler, { content, body: { docMetadata: 'not-json' } });
+        assert.strictEqual(doc.status, 400);
+        assert.strictEqual(doc.body.errors[0].message, 'docMetadata is not valid JSON');
+        const img = await call(handler, { content, body: { imageMetadata: '{' } });
+        assert.strictEqual(img.status, 400);
+        assert.strictEqual(img.body.errors[0].message, 'imageMetadata is not valid JSON');
+    }
 });
 
 test('replace clears existing content and stores the upload, answering 200', async (t) => {

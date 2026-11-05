@@ -4529,11 +4529,13 @@ components:
         - `docs/`: documents. Files directly in `docs/` are stored as `DOC_Other`; files in `docs/<Category>/` as
           `DOC_<Category>`.
 
-        Only `web/` and `docs/` are read, optionally inside one wrapper folder (a lone `web/` or `docs/` is never
-        treated as a wrapper). An upload with no content is accepted by `PUT` (it removes all content) and
-        rejected by `POST`.
+        Only `web/` and `docs/` may appear at the top level, optionally inside one wrapper folder (a lone `web/` or
+        `docs/` is never treated as a wrapper). Any other top-level entry is rejected with `400`, naming it.
+        `__MACOSX/` and `.DS_Store` are ignored. An upload with no content is accepted by `PUT` (it removes all
+        content) and rejected by `POST`.
 
-        `docMetadata` and `imageMetadata` are JSON strings because they are submitted as multipart form fields.
+        `docMetadata` and `imageMetadata` are JSON strings because they are submitted as multipart form fields;
+        text that isn't valid JSON, or of the wrong shape, is rejected with `400`.
       content:
         multipart/form-data:
           schema:
@@ -4547,11 +4549,16 @@ components:
                 description: ZIP upload field named `content`.
               docMetadata:
                 type: string
-                description: Optional JSON string containing API document link metadata.
-                example: "[{\"name\":\"External guide\",\"url\":\"https://example.com/docs/guide\",\"type\":\"LINK\"}]"
+                description: >-
+                  Optional JSON array of document links, grouped by type. Each `type` must be `DOC_<Category>`.
+                  A link is stored as `LINK_<displayName>` under that type.
+                example: "[{\"type\":\"DOC_LINK\",\"links\":[{\"displayName\":\"External guide\",\"url\":\"https://example.com/docs/guide\"}]}]"
               imageMetadata:
                 type: string
-                description: Optional JSON string containing API image metadata.
+                description: >-
+                  Optional JSON object mapping an image slot to an uploaded file name, overriding the slot taken
+                  from the file name. Each named file must be in the upload and fills one slot. Two images whose names differ only
+                  by extension take the same slot, so one of them must be named here.
                 example: "{\"api-icon\":\"icon.png\"}"
     ApplicationMultipartBody:
       required: true

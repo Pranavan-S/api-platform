@@ -22,7 +22,7 @@ my-api-content.zip
         └── guide.md
 ```
 
-`web/` and `docs/` can sit inside one wrapper folder (for example `my-api/web/…`), but a lone `web/` or `docs/` is never treated as a wrapper.
+Only `web/` and `docs/` may appear at the top level. They can sit inside one wrapper folder (for example `my-api/web/…`), but a lone `web/` or `docs/` is never treated as a wrapper. Any other top-level entry, such as a misspelled `doc/`, is rejected with `400` naming it; `__MACOSX/` and `.DS_Store` are ignored.
 
 Every image in `web/` fills the slot named by its file name without the extension: `api-icon.png` (or `.jpg`) is the thumbnail, and `banner.png` is `apiImageMetadata.banner` in a landing-page template.
 
@@ -67,8 +67,16 @@ curl -k -X PUT \
 | Form field | Description |
 |---|---|
 | `content` | ZIP file containing `web/` and/or `docs/` directories |
-| `imageMetadata` | JSON object mapping image tag names to filenames within `web/`. The `api-icon` tag sets the catalog card icon |
-| `docMetadata` | JSON array for external documentation links (see [External Doc Links](#external-doc-links)) |
+| `imageMetadata` | Optional JSON object mapping an image slot to a file name within `web/`, overriding the slot taken from the file name. The `api-icon` slot sets the catalog card icon |
+| `docMetadata` | Optional JSON array for external documentation links (see [External Doc Links](#external-doc-links)) |
+
+Text in `imageMetadata` or `docMetadata` that isn't valid JSON is rejected with `400`.
+
+An image takes the slot named by its file name without the extension (`logo.png` takes `logo`). The upload is rejected with `400` when:
+
+- `imageMetadata` names a file that isn't in the upload.
+- `imageMetadata` names the same file for more than one slot. Each image fills one slot.
+- Two images would take the same slot, such as `logo.png` and `logo.jpg`. Name one of them in `imageMetadata` to choose which one gets the slot.
 
 ## Landing Page (`web/`)
 
@@ -148,14 +156,14 @@ curl https://api.example.com/orders \
 
 ## External Doc Links
 
-To link to externally hosted documentation (rather than uploaded files), pass `docMetadata` as a JSON string:
+To link to externally hosted documentation (rather than uploaded files), pass `docMetadata` as a JSON string. Group links by document type; each `type` must be `DOC_<Category>` (for example `DOC_LINK`). A link is stored as `LINK_<displayName>` under that type:
 
 ```bash
 curl -k -X POST \
   "https://localhost:9543/api-portal/api/v0.9/apis/{apiId}/assets" \
   -H "Authorization: Bearer $TOKEN" \
   -F "content=@my-api-content.zip" \
-  -F 'docMetadata=[{"name":"External Guide","url":"https://docs.example.com/guide","type":"LINK"}]'
+  -F 'docMetadata=[{"type":"DOC_LINK","links":[{"displayName":"External Guide","url":"https://docs.example.com/guide"}]}]'
 ```
 
 ## Get API Content

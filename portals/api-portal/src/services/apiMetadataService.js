@@ -851,18 +851,11 @@ const deleteAPIMetadata = async (req, res) => {
 };
 
 const readContentUpload = async (req, uploadedFile, orgId, apiId, allowEmpty) => {
+    const docMetadata = apiContentRules.parseDocMetadata(req.body.docMetadata);
+    const imageMetadata = apiContentRules.parseImageMetadata(req.body.imageMetadata);
     const apiContent = await extractApiContentFromUploadedZip(uploadedFile, orgId, apiId, 'classic', { allowEmpty });
-    if (req.body.docMetadata) {
-        apiContent.push(...util.getAPIDocLinks(JSON.parse(req.body.docMetadata)));
-    }
-    const imageMetadata = req.body.imageMetadata ? JSON.parse(req.body.imageMetadata) : {};
-    const resolvedImageMetadata = buildImageMetadataFromContent(apiContent, imageMetadata);
-    const filenameToKey = Object.fromEntries(Object.entries(resolvedImageMetadata).map(([key, fileName]) => [fileName, key]));
-    apiContent.forEach(file => {
-        if (file.type === constants.DOC_TYPES.IMAGES) {
-            file.key = filenameToKey[file.fileName];
-        }
-    });
+    apiContent.push(...util.getAPIDocLinks(docMetadata));
+    apiContentRules.assignImageSlots(apiContent, imageMetadata);
     const duplicates = apiContentRules.findDuplicateItems(apiContent);
     if (duplicates.length) {
         throw new ValidationError(`Duplicate content in upload: ${duplicates.map(apiContentRules.describeItem).join(', ')}`);
@@ -1825,12 +1818,12 @@ async function resolveZipRootPath(extractPath) {
 
 async function extractApiContentFromUploadedZip(zipFile, orgId, apiId, mode = 'classic', { allowEmpty = false } = {}) {
     if (!zipFile) {
-        throw new ValidationError("Missing required zip file");
+        throw new ValidationError('Missing required file: content');
     }
 
     const zipFileName = path.basename(String(zipFile.originalname || ''));
     if (!zipFileName?.toLowerCase().endsWith('.zip')) {
-        throw new ValidationError('Invalid zip file. Expected a .zip file');
+        throw new ValidationError('content must be a .zip file');
     }
 
     const extractionKey = `${orgId || 'org'}-${apiId || 'api'}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -1851,6 +1844,9 @@ async function extractApiContentFromUploadedZip(zipFile, orgId, apiId, mode = 'c
         }
 
         const rootPath = await resolveZipRootPath(extractPath);
+        if (mode === 'classic') {
+            await apiContentRules.assertKnownTopLevelEntries(rootPath);
+        }
 
         const webPath = path.join(rootPath, constants.ARTIFACT_DIR.WEB);
         const docsPath = path.join(rootPath, constants.ARTIFACT_DIR.DOCS);
@@ -1881,7 +1877,8 @@ async function extractApiContentFromUploadedZip(zipFile, orgId, apiId, mode = 'c
         if (error instanceof ValidationError) {
             throw error;
         }
-        throw new ValidationError(`Invalid zip file: ${error.message}`);
+        logger.warn('Content ZIP could not be read', { error: error.message, orgId, apiId });
+        throw new ValidationError('Invalid zip file');
     } finally {
         await fs.rm(tempBasePath, { recursive: true, force: true });
         // Clean up the original upload file when multer saved it to disk (zipFile.path)
