@@ -215,50 +215,51 @@ const update = async (apiFile, fileName, apiId, orgId, type, updatedBy, t, key) 
 
 const deleteFile = async (fileName, type, orgId, apiId, t) => {
     const exec = t || db;
-    const contentsToDelete = await exec.query(
-        `SELECT c.* FROM ${CONTENT_TABLE} c JOIN ${API_METADATA_TABLE} m ON c.api_uuid = m.uuid AND c.portal_id = m.portal_id
-         WHERE c.file_name = ? AND c.api_uuid = ? AND c.type LIKE ? AND m.org_uuid = ? AND m.portal_id = ?`,
-        [fileName, apiId, `%${type}%`, orgId, getPortalId()]
+    const { rowCount } = await exec.execute(
+        `DELETE FROM ${CONTENT_TABLE} WHERE file_name = ? AND api_uuid = ? AND type = ? AND portal_id = ? AND ${TENANT_SCOPE_EXISTS}`,
+        [fileName, apiId, type, getPortalId(), orgId, getPortalId()]
     );
-    let rowCount = 0;
-    for (const content of contentsToDelete) {
-        ({ rowCount } = await exec.execute(
-            `DELETE FROM ${CONTENT_TABLE} WHERE api_uuid = ? AND file_name = ? AND type = ? AND portal_id = ?`,
-            [content.api_uuid, content.file_name, content.type, content.portal_id]
-        ));
-    }
     return rowCount;
 };
 
 const deleteAll = async (type, orgId, apiId, t) => {
     const exec = t || db;
-    const contentsToDelete = await exec.query(
-        `SELECT c.* FROM ${CONTENT_TABLE} c JOIN ${API_METADATA_TABLE} m ON c.api_uuid = m.uuid AND c.portal_id = m.portal_id
-         WHERE c.api_uuid = ? AND c.type LIKE ? AND m.org_uuid = ? AND m.portal_id = ?`,
-        [apiId, `%${type}%`, orgId, getPortalId()]
+    const { rowCount } = await exec.execute(
+        `DELETE FROM ${CONTENT_TABLE} WHERE api_uuid = ? AND type = ? AND portal_id = ? AND ${TENANT_SCOPE_EXISTS}`,
+        [apiId, type, getPortalId(), orgId, getPortalId()]
     );
-    let rowCount = 0;
-    for (const content of contentsToDelete) {
-        ({ rowCount } = await exec.execute(
-            `DELETE FROM ${CONTENT_TABLE} WHERE api_uuid = ? AND file_name = ? AND type = ? AND portal_id = ?`,
-            [content.api_uuid, content.file_name, content.type, content.portal_id]
-        ));
-    }
     return rowCount;
 };
 
 /**
- * Delete every content row of an exact type for an API (e.g. clear all images
- * before re-storing a freshly uploaded set). Exact match on type, scoped to
- * api_uuid, and participates in the caller's transaction.
+ * Delete all content of an API — every row except its definition and schema — so a
+ * replace also clears rows saved under types that are no longer accepted.
  */
-const deleteAllByType = async (type, apiId, t) => {
+const deleteAllContent = async (apiId, t) => {
     const exec = t || db;
     const { rowCount } = await exec.execute(
-        `DELETE FROM ${CONTENT_TABLE} WHERE api_uuid = ? AND type = ? AND portal_id = ?`,
-        [apiId, type, getPortalId()]
+        `DELETE FROM ${CONTENT_TABLE} WHERE api_uuid = ? AND portal_id = ? AND type NOT IN (?, ?)`,
+        [apiId, getPortalId(), constants.DOC_TYPES.API_DEFINITION, constants.DOC_TYPES.SCHEMA_DEFINITION]
     );
     return rowCount;
+};
+
+/**
+ * Return the items that already exist for the API: same type and file name, or, for a
+ * keyed image, the same slot. These are the two unique indexes the insert would hit.
+ */
+const findExisting = async (items, apiId, t) => {
+    const existing = [];
+    for (const item of items) {
+        const found = await (t || db).queryOne(
+            `SELECT uuid FROM ${CONTENT_TABLE} WHERE api_uuid = ? AND type = ? AND (file_name = ? OR lookup_key = ?) AND portal_id = ?`,
+            [apiId, item.type, item.fileName, item.key ?? null, getPortalId()]
+        );
+        if (found) {
+            existing.push(item);
+        }
+    }
+    return existing;
 };
 
 const getDoc = async (type, orgId, apiId, t) => {
@@ -437,7 +438,8 @@ module.exports = {
     update,
     delete: deleteFile,
     deleteAll,
-    deleteAllByType,
+    deleteAllContent,
+    findExisting,
     getDoc,
     getDocByName,
     getDocTypes,
