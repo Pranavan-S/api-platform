@@ -242,21 +242,16 @@ At least one of `web/` or `docs/` must exist at the ZIP root.
 ```shell
 
 curl -X GET https://localhost:9543/api-portal/api/v0.9/mcp-servers/{mcpServerId}/assets?type=document&fileName=getting-started.md \
-  -H 'Authorization: Bearer {access_token}' \
   -H 'Accept: text/css'
 
 ```
 
 Retrieves a single stored MCP server content file. Mirrors `GET /api-portal/api/v0.9/apis/{apiId}/assets`.
 
-### Authentication
-
-<aside class="warning">
-This operation requires a <strong>Bearer JWT</strong> access token in the <code>Authorization</code> header.
-
-Required scopes (the token must carry at least one of): `dp:mcp_server_content:read`, `dp:mcp_server_content:manage`
-
-</aside>
+Image files (`type=IMAGE`) are publicly readable so that an MCP server's icon renders on the public
+listing and landing pages without a session; the organization is then this instance's own
+configured one (mirrors `GET /views/{viewId}/asset`). All other content categories require a
+session: an anonymous request for a non-image type is rejected.
 
 <h3 id="get-an-mcp-server-content-file-parameters">Parameters</h3>
 
@@ -264,6 +259,7 @@ Required scopes (the token must carry at least one of): `dp:mcp_server_content:r
 |---|---|---|---|---|
 |type|query|string|true|Stored API content type selector. Common values are `web`, `document`, `image`, and `link`, depending on how the uploaded ZIP content was classified.|
 |fileName|query|string|true|Stored API content file name to retrieve.|
+|orgId|query|string|false|DEPRECATED and ignored. Accepted only so existing callers (the portal's own image-URL rewrite appends it) are not rejected. The organization is always this instance's own — from the session when there is one, otherwise from `organization.handle` configuration. It was previously honoured on this unauthenticated endpoint, which made it a selector for any organization's API icons in a shared database.|
 |mcpServerId|path|string|true|The MCP server's handle (unique per org).|
 
 > Example responses

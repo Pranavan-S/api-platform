@@ -2254,15 +2254,30 @@ paths:
       tags:
         - MCP Server Content
       summary: Get an MCP server content file
-      description: Retrieves a single stored MCP server content file. Mirrors `GET /api-portal/api/v0.9/apis/{apiId}/assets`.
+      description: |
+        Retrieves a single stored MCP server content file. Mirrors `GET /api-portal/api/v0.9/apis/{apiId}/assets`.
+
+        Image files (`type=IMAGE`) are publicly readable so that an MCP server's icon renders on the public
+        listing and landing pages without a session; the organization is then this instance's own
+        configured one (mirrors `GET /views/{viewId}/asset`). All other content categories require a
+        session: an anonymous request for a non-image type is rejected.
       operationId: getMcpServerContentFile
-      security:
-        - OAuth2Security:
-            - dp:mcp_server_content:read
-            - dp:mcp_server_content:manage
+      security: []
       parameters:
         - $ref: "#/components/parameters/contentTypeQuery"
         - $ref: "#/components/parameters/contentFileNameQuery"
+        - name: orgId
+          in: query
+          required: false
+          deprecated: true
+          schema:
+            type: string
+          description: >-
+            DEPRECATED and ignored. Accepted only so existing callers (the portal's own image-URL
+            rewrite appends it) are not rejected. The organization is always this instance's own —
+            from the session when there is one, otherwise from `organization.handle` configuration.
+            It was previously honoured on this unauthenticated endpoint, which made it a selector
+            for any organization's API icons in a shared database.
       responses:
         "200":
           $ref: "#/components/responses/ContentAssetResponse"
