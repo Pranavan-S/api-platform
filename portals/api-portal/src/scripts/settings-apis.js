@@ -430,6 +430,10 @@
       if (zipProblem) { showContentError(zipProblem); return; }
       if (editingId && !skipImportConfirm && !(await confirmReplaceContent())) return;
     }
+    /* The file confirmed here is the one imported: the import view is locked until the save ends. */
+    var importFile = importing ? contentZipFile : null;
+    var importPanel = document.getElementById('wz-assets-panel-import');
+    importPanel.inert = importing;
     var removeOnSave = assetsMode === 'docs' ? docsToRemoveOnSave() : [];
 
     var resolvedType = wizardIsMcp ? 'Mcp'
@@ -487,8 +491,10 @@
         var savedNoun = meta.type === 'Mcp' ? 'MCP server' : 'API';
         var created = !editingId;
         if (importing) {
-          var contentError = await importContent(base, editingId || handle);
+          var contentError = await importContent(base, editingId || handle, importFile);
           if (contentError) {
+            importPanel.inert = false;
+            applySavedThumbnail();
             if (created) switchToEditAfterCreate(handle);
             showContentError(contentError);
             markContentRejected();
@@ -510,14 +516,16 @@
       }
     } catch(e) {
       await showAlert('Error: ' + e.message, 'error');
+    } finally {
+      importPanel.inert = false;
     }
   }
 
-  /* Replaces all content of the API with the selected package. Returns the reason on failure. */
-  async function importContent(base, handle) {
+  /* Replaces all content of the API with the given package. Returns the reason on failure. */
+  async function importContent(base, handle, file) {
     try {
       var fd = new FormData();
-      fd.append('content', contentZipFile);
+      fd.append('content', file);
       var res = await fetch(window.apiPortalApi.root(base + '/' + encodeURIComponent(handle) + '/assets'), {
         method: 'PUT',
         headers: { 'X-CSRF-Token': window.apiPortalApi.csrfToken() },
@@ -534,6 +542,16 @@
     }
   }
 
+  /* The save committed the thumbnail change, so a retry must not offer or send it again. */
+  function applySavedThumbnail() {
+    if (thumbnailChange.action === 'none') return;
+    currentThumb = thumbnailChange.action === 'replace'
+      ? { name: 'api-icon.' + (thumbnailChange.file.type === 'image/png' ? 'png' : 'jpg'), src: thumbObjectUrl }
+      : null;
+    thumbnailChange = { action: 'none' };
+    renderThumbnail();
+  }
+
   /* The API now exists, so the next Save updates it and retries only the import. */
   function switchToEditAfterCreate(handle) {
     editingId = handle;
@@ -542,11 +560,6 @@
     specFile = null;
     document.getElementById('wz-spec-input').value = '';
     renderSpecStep();
-    if (thumbnailChange.action === 'replace') {
-      currentThumb = { name: 'api-icon.' + (thumbnailChange.file.type === 'image/png' ? 'png' : 'jpg'), src: thumbObjectUrl };
-      thumbnailChange = { action: 'none' };
-      renderThumbnail();
-    }
     document.getElementById('wz-handle').readOnly = true;
     document.getElementById('cfg-wizard-title').textContent = wizardIsMcp ? 'Edit MCP Server' : 'Edit API';
     renderAssetsView();
@@ -1302,7 +1315,7 @@
   function handleContentZipFile(f) {
     if (!f) return;
     var problem = contentZipProblem(f);
-    if (problem) { showContentError(problem); return; }
+    if (problem) { resetContentUpload(); showContentError(problem); return; }
     contentZipFile = f;
     document.getElementById('wz-content-name').textContent = f.name;
     document.getElementById('wz-content-sub').textContent = fmtSize(f.size) + ' · Applied when you save';
