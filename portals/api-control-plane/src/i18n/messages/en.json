@@ -3903,6 +3903,10 @@
   "apiControlPlane.pages.appShell.appShellPages.portals.components.PublishedSpecificationTab.loading": {
     "defaultMessage": "Loading the published specification"
   },
+  "apiControlPlane.pages.appShell.appShellPages.portals.components.SpecificationTab.apiDefinitionChanged": {
+    "defaultMessage": "Differs from the API’s specification.",
+    "description": "Tooltip of the info icon beside the button that loads the API’s own specification."
+  },
   "apiControlPlane.pages.appShell.appShellPages.portals.components.SpecificationTab.editorLabel": {
     "defaultMessage": "API definition ({format})",
     "description": "Accessible name for the editor holding the definition’s own text. {format} is JSON, YAML or GraphQL."
@@ -3913,6 +3917,10 @@
   "apiControlPlane.pages.appShell.appShellPages.portals.components.SpecificationTab.formatLabel": {
     "defaultMessage": "Source format",
     "description": "Accessible name for the YAML / JSON toggle buttons."
+  },
+  "apiControlPlane.pages.appShell.appShellPages.portals.components.SpecificationTab.loadApiDefinition": {
+    "defaultMessage": "Load the API’s specification",
+    "description": "Button replacing the specification on this page with the API’s own current one. Shown only when the two differ."
   },
   "apiControlPlane.pages.appShell.appShellPages.portals.components.SpecificationTab.malformed": {
     "defaultMessage": "This is not valid {format}: {detail}",

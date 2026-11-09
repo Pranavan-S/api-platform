@@ -59,7 +59,12 @@ import { SubscriptionPlansTab } from './components/SubscriptionPlansTab';
 import { restPublishTarget, type PublishTarget } from './publishTarget';
 import { usePublishPageData } from './usePublishPageData';
 import { buildLandingPageStarter } from './utils/landingPageStarter';
-import type { DefinitionFormat } from './utils/storedDefinition';
+import {
+  reformatDefinition,
+  sameDefinition,
+  type DefinitionFormat,
+  type StoredDefinition,
+} from './utils/storedDefinition';
 import {
   deletedDocumentsOf,
   deletedPlansOf,
@@ -378,6 +383,8 @@ export function PortalPublishPageContent({ target }: { target: PublishTarget }) 
   const [definitionText, setDefinitionText] = useState('');
   const [definitionFormat, setDefinitionFormat] = useState<DefinitionFormat>(defaultFormat);
   const [definitionParseError, setDefinitionParseError] = useState<string>();
+  // The definition the page opened with, last loaded from the API or last saved, so the API's is compared with that, not each edit.
+  const [specBaseline, setSpecBaseline] = useState<StoredDefinition>();
   // The thumbnail shown, and the draft's own; saving sends it only when they differ.
   const [thumbnail, setThumbnail] = useState<Blob>();
   const [storedThumbnail, setStoredThumbnail] = useState<Blob>();
@@ -428,6 +435,7 @@ export function PortalPublishPageContent({ target }: { target: PublishTarget }) 
       values: data.seed.values,
     });
     setDefinitionFormat(data.seed.definition?.format ?? defaultFormat);
+    setSpecBaseline(data.seed.definition);
     // A saved draft or publication keeps its own document selection, even an empty one.
     if (data.draft || data.publication) setDocumentsPreselected(true);
     setInitialized(true);
@@ -516,6 +524,16 @@ export function PortalPublishPageContent({ target }: { target: PublishTarget }) 
     autoPublishStarted.current = true;
     void publishHandlerRef.current?.();
   });
+
+  const hasSaved = Boolean(draft || publication);
+  const apiDefinitionDiffers = useMemo(
+    () =>
+      hasSaved &&
+      data.apiDefinition !== undefined &&
+      specBaseline !== undefined &&
+      !sameDefinition(data.apiDefinition, specBaseline),
+    [data.apiDefinition, hasSaved, specBaseline],
+  );
 
   if (data.isLoading) {
     return <LoadingState label={intl.formatMessage(messages.loading)} />;
@@ -629,6 +647,7 @@ export function PortalPublishPageContent({ target }: { target: PublishTarget }) 
       }),
     );
     setSaved((current) => ({ ...current, definitionText }));
+    setSpecBaseline({ format: definitionFormat, text: definitionText });
     return true;
   };
 
@@ -675,6 +694,14 @@ export function PortalPublishPageContent({ target }: { target: PublishTarget }) 
     );
     setLandingPage(starter);
     setGeneratedLandingPage(starter);
+  };
+
+  /** Replaces the specification on the page with the API's own, as an unsaved change, in the format shown. */
+  const loadApiDefinition = () => {
+    if (!data.apiDefinition) return;
+    setDefinitionText(reformatDefinition(data.apiDefinition, definitionFormat));
+    setDefinitionParseError(undefined);
+    setSpecBaseline(data.apiDefinition);
   };
 
   /** Takes an image the user picked as the thumbnail, unless the server would refuse it. */
@@ -890,6 +917,7 @@ export function PortalPublishPageContent({ target }: { target: PublishTarget }) 
               setDefinitionText(text);
               if (definitionParseError) setDefinitionParseError(undefined);
             }}
+            onLoadApiDefinition={apiDefinitionDiffers ? loadApiDefinition : undefined}
             parseError={definitionParseError}
             text={definitionText}
           />

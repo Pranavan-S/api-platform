@@ -1012,7 +1012,7 @@ describe('PortalPublishPage', () => {
     });
   });
 
-  it('does not query publication/definition or the API’s own spec once a draft definition is found', async () => {
+  it('does not query publication/definition once a draft definition is found, and reads the API’s own spec only to compare', async () => {
     const definitionRecorders = servePublicationState({ draft: aPublicationDraftDetails() });
     server.use(
       resource(
@@ -1028,8 +1028,8 @@ describe('PortalPublishPage', () => {
 
     await screen.findByDisplayValue('Loan Management Service');
     await waitFor(() => expect(definitionRecorders.draftDefinition.count()).toBe(1));
+    await waitFor(() => expect(definitionRecorders.openApi.count()).toBe(1));
     expect(definitionRecorders.publicationDefinition.count()).toBe(0);
-    expect(definitionRecorders.openApi.count()).toBe(0);
   });
 
   it.each([
@@ -1946,6 +1946,133 @@ describe('PortalPublishPage — published specification', () => {
 
     const editor = (await screen.findByRole('textbox', { name: 'API definition (JSON)' })) as HTMLTextAreaElement;
     expect(editor.value).toContain('Draft Name');
+  });
+});
+
+describe('PortalPublishPage — the API\u2019s own specification', () => {
+  const LOAD = 'Load the API\u2019s specification';
+  const savedSpec = { openapi: '3.0.3', info: { title: 'Loans', version: '1.0.0' }, paths: {} };
+  const SAME_AS_YAML = 'openapi: 3.0.3\ninfo:\n  title: Loans\n  version: 1.0.0\npaths: {}\n';
+  // A content change without paths, which would bring in the Swagger UI viewer.
+  const CHANGED = 'openapi: 3.0.3\ninfo:\n  title: Loans\n  version: 1.0.0\n  description: Now with repayments.\npaths: {}\n';
+
+  /** Serves the API's own spec, and returns the recorder of its reads. */
+  function serveApiSpec(content: string) {
+    const reads = recorder();
+    server.use(resource(API_OPENAPI_PATH, { content }, { record: reads }));
+    return reads;
+  }
+
+  async function openSpecification(user: ReturnType<typeof renderPage>['user']) {
+    await user.click(await screen.findByRole('tab', { name: 'Specification' }));
+  }
+
+  /** Lets the API's own spec read land, so a missing button means it was compared, not still loading. */
+  const settle = async (reads: Recorder) => {
+    await waitFor(() => expect(reads.count()).toBe(1));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  };
+
+  it('offers the API\u2019s changed specification for a publication, and loads it as an unsaved change in the format shown', async () => {
+    servePublicationState({ publication: aPublication() });
+    server.use(resource(PUBLICATION_DEFINITION_PATH, savedSpec));
+    serveApiSpec(CHANGED);
+
+    const { user } = renderPage();
+    await showDraft(user);
+    await openSpecification(user);
+
+    await user.click(await screen.findByRole('button', { name: LOAD }));
+
+    // The API's own is YAML; the page was showing JSON, and stays in it.
+    expect(await screen.findByRole('textbox', { name: 'API definition (JSON)' })).toHaveValue(
+      JSON.stringify({ ...savedSpec, info: { ...savedSpec.info, description: 'Now with repayments.' } }, null, 2),
+    );
+    expect(screen.queryByRole('button', { name: LOAD })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Published' }));
+    const published = (await screen.findByRole('textbox', { name: 'API definition (JSON)' })) as HTMLTextAreaElement;
+    expect(published.value).not.toContain('Now with repayments.');
+  });
+
+  it('offers it for a draft whose specification differs', async () => {
+    servePublicationState({ draft: aPublicationDraftDetails() });
+    server.use(resource(DRAFT_DEFINITION_PATH, savedSpec));
+    serveApiSpec(CHANGED);
+
+    const { user } = renderPage();
+    await openSpecification(user);
+
+    expect(await screen.findByRole('button', { name: LOAD })).toBeInTheDocument();
+  });
+
+  it('offers nothing when the API\u2019s specification differs only in how it is written', async () => {
+    servePublicationState({ publication: aPublication() });
+    server.use(resource(PUBLICATION_DEFINITION_PATH, savedSpec));
+    const reads = serveApiSpec(SAME_AS_YAML);
+
+    const { user } = renderPage();
+    await showDraft(user);
+    await openSpecification(user);
+    await settle(reads);
+
+    expect(screen.queryByRole('button', { name: LOAD })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [404, 'REST_API_SPEC_NOT_FOUND'],
+    [500, 'INTERNAL_ERROR'],
+  ])('opens normally, offering nothing, when the API\u2019s specification answers %i', async (status, code) => {
+    servePublicationState({ publication: aPublication() });
+    server.use(resource(PUBLICATION_DEFINITION_PATH, savedSpec));
+    const reads = recorder();
+    server.use(failure('get', API_OPENAPI_PATH, status, code, { record: reads }));
+
+    const { user } = renderPage();
+    await showDraft(user);
+    await openSpecification(user);
+    await settle(reads);
+
+    expect(screen.getByRole('textbox', { name: 'API definition (JSON)' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: LOAD })).not.toBeInTheDocument();
+    expect(screen.queryByText('Unable to load the publish details.')).not.toBeInTheDocument();
+  });
+
+  it('offers it as soon as a draft is saved with a specification that differs', async () => {
+    servePublicationState();
+    const definitionRequests = recorder();
+    server.use(
+      accepts('put', DRAFT_PATH, aPublicationDraftDetails({ updatedAt: new Date().toISOString() })),
+      accepts('put', DRAFT_DEFINITION_PATH, undefined, { record: definitionRequests }),
+    );
+    const reads = serveApiSpec(SAME_AS_YAML);
+
+    const { user } = renderPage();
+    await openSpecification(user);
+    await settle(reads);
+    expect(screen.queryByRole('button', { name: LOAD })).not.toBeInTheDocument();
+
+    await user.type(screen.getByRole('textbox', { name: 'API definition (YAML)' }), 'x-note: edited');
+    // An edit alone changes nothing; the comparison moves only when the draft is saved.
+    expect(screen.queryByRole('button', { name: LOAD })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save Draft' }));
+
+    await waitFor(() => expect(definitionRequests.count()).toBe(1));
+    expect(await screen.findByRole('button', { name: LOAD })).toBeInTheDocument();
+  });
+
+  it('offers nothing on a first publish, which already shows the API\u2019s own specification', async () => {
+    servePublicationState();
+    const reads = serveApiSpec(CHANGED);
+
+    const { user } = renderPage();
+    await openSpecification(user);
+    await settle(reads);
+
+    expect(screen.getByRole('textbox', { name: 'API definition (YAML)' })).toHaveValue(CHANGED);
+    expect(screen.queryByRole('button', { name: LOAD })).not.toBeInTheDocument();
   });
 });
 
