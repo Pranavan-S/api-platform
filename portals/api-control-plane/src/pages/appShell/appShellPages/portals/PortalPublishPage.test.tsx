@@ -2761,6 +2761,49 @@ describe('PortalPublishPage — landing page', () => {
       expect(publishRequests.count()).toBe(0);
     });
 
+    it('publishes a saved draft as saved: its documents and plans, not every document', async () => {
+      servePublicationState({
+        draft: aPublicationDraftDetails({
+          documents: publicationSelections('guide'),
+          subscriptionPlans: publicationSelections('gold'),
+        }),
+        plans: [aSubscriptionPlan({ displayName: 'Gold', id: 'gold', status: 'ACTIVE' })],
+      });
+      const draftRequests = recorder();
+      const publishRequests = recorder();
+      server.use(
+        collection(DOCS_PATH, TWO_DOCS),
+        accepts('put', DRAFT_PATH, aPublicationDraftDetails(), { record: draftRequests }),
+        accepts('put', DRAFT_DEFINITION_PATH, undefined),
+        accepts('post', PUBLISH_PATH, aPublication(), { record: publishRequests }),
+      );
+
+      renderFromCard({ autoPublish: true });
+
+      await waitFor(() => expect(publishRequests.count()).toBe(1));
+      expect(JSON.parse(draftRequests.last()?.body ?? '{}')).toMatchObject({
+        docIds: ['guide'],
+        subscriptionPlanIds: ['gold'],
+      });
+    });
+
+    it('still publishes a saved draft when the plan list cannot be read', async () => {
+      servePublicationState({ draft: aPublicationDraftDetails({ subscriptionPlans: publicationSelections('gold') }) });
+      const draftRequests = recorder();
+      const publishRequests = recorder();
+      server.use(
+        failure('get', '/subscription-plans', 500, 'INTERNAL_ERROR'),
+        accepts('put', DRAFT_PATH, aPublicationDraftDetails(), { record: draftRequests }),
+        accepts('put', DRAFT_DEFINITION_PATH, undefined),
+        accepts('post', PUBLISH_PATH, aPublication(), { record: publishRequests }),
+      );
+
+      renderFromCard({ autoPublish: true });
+
+      await waitFor(() => expect(publishRequests.count()).toBe(1));
+      expect(JSON.parse(draftRequests.last()?.body ?? '{}').subscriptionPlanIds).toEqual(['gold']);
+    });
+
     it('holds Publish back until the documents are selected', async () => {
       servePublicationState();
       let release: () => void = () => {};

@@ -3909,6 +3909,29 @@
   "apiControlPlane.pages.appShell.appShellPages.portals.components.PublishActionsBar.unpublish": {
     "defaultMessage": "Unpublish"
   },
+  "apiControlPlane.pages.appShell.appShellPages.portals.components.PublishDraftDialog.body": {
+    "defaultMessage": "A draft for {portalName} was saved {time}. It will be published as saved.",
+    "description": "{portalName} is the API Portal display name, user-supplied; do not translate it. {time} is a relative time such as \"2 days ago\"."
+  },
+  "apiControlPlane.pages.appShell.appShellPages.portals.components.PublishDraftDialog.bodyNoTime": {
+    "defaultMessage": "A draft for {portalName} was saved. It will be published as saved.",
+    "description": "{portalName} is the API Portal display name, user-supplied; do not translate it."
+  },
+  "apiControlPlane.pages.appShell.appShellPages.portals.components.PublishDraftDialog.close": {
+    "defaultMessage": "Close",
+    "description": "Accessible name of the icon button that dismisses the dialog without publishing."
+  },
+  "apiControlPlane.pages.appShell.appShellPages.portals.components.PublishDraftDialog.publishDraft": {
+    "defaultMessage": "Publish draft",
+    "description": "Publishes the saved draft as it is."
+  },
+  "apiControlPlane.pages.appShell.appShellPages.portals.components.PublishDraftDialog.reviewDraft": {
+    "defaultMessage": "Review draft",
+    "description": "Opens the publish page with the saved draft loaded, without publishing it."
+  },
+  "apiControlPlane.pages.appShell.appShellPages.portals.components.PublishDraftDialog.title": {
+    "defaultMessage": "Publish the saved draft?"
+  },
   "apiControlPlane.pages.appShell.appShellPages.portals.components.PublishedSpecificationTab.error": {
     "defaultMessage": "Unable to load the published specification."
   },

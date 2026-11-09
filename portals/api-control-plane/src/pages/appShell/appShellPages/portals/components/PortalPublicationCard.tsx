@@ -36,11 +36,12 @@ import { useId, useRef, useState, type ReactNode } from 'react';
 import { defineMessages, FormattedMessage, useIntl } from 'react-intl';
 import { useNavigate } from 'react-router-dom';
 
-import type { PublicationSummaryItem } from '@/api/resources/apiPublications';
+import { type PublicationSummaryItem } from '@/api/resources/apiPublications';
 import devportalLogoUrl from '@/assets/icons/devportal-logo.png';
 import { useFormatters } from '@/i18n/useFormatters';
 import { hairline } from '@/theme/receipes';
 import { buildViewInPortalUrl, isListedOnPortal, publicationStatusMeta } from '../utils/publicationDisplay';
+import { PublishDraftDialog } from './PublishDraftDialog';
 
 const messages = defineMessages({
   publish: {
@@ -178,6 +179,10 @@ export function PortalPublicationCard({
     navigate(publishHref, { state: { portalName: publication.apiPortalName, autoPublish } });
   };
 
+  // "Publish" with a saved draft asks first; with none it publishes the defaults.
+  const [draftPromptOpen, setDraftPromptOpen] = useState(false);
+  const publish = () => (publication.draftUpdatedAt ? setDraftPromptOpen(true) : openPublishPage(true));
+
   return (
     <Card sx={{ display: 'flex', flexDirection: 'column', height: '100%' }} variant="outlined">
       <Stack spacing={2} sx={{ flex: 1, p: 2.5 }}>
@@ -238,7 +243,7 @@ export function PortalPublicationCard({
                   >
                     <Button
                       aria-describedby={nameId}
-                      onClick={() => openPublishPage(mode === 'publish')}
+                      onClick={() => (mode === 'publish' ? publish() : openPublishPage(false))}
                       startIcon={mode === 'publish' && <Megaphone size={16} />}
                       sx={{ '&&': { flex: '1 1 auto', minWidth: 0 }, whiteSpace: 'nowrap' }}
                     >
@@ -298,6 +303,14 @@ export function PortalPublicationCard({
           </Button>
         </Stack>
       </Stack>
+      <PublishDraftDialog
+        onClose={() => setDraftPromptOpen(false)}
+        onPublishDraft={() => openPublishPage(true)}
+        onReviewDraft={() => openPublishPage(false)}
+        open={draftPromptOpen}
+        portalName={name}
+        savedAt={publication.draftUpdatedAt ?? undefined}
+      />
     </Card>
   );
 }

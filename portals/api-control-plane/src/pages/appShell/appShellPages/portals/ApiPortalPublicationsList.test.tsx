@@ -33,7 +33,7 @@ import {
 } from '@/test/msw';
 import { makeConsoleScope } from '@/test/mockScope';
 import { server } from '@/test/server';
-import { renderWithProviders, screen } from '@/test/utils';
+import { renderWithProviders, screen, waitFor, within } from '@/test/utils';
 import { ApiPortalPublicationsList } from './ApiPortalPublicationsList';
 
 const ORG = 'api-platform-demo';
@@ -180,7 +180,7 @@ describe('ApiPortalPublicationsList', () => {
     expect(flowState()).toEqual({ autoPublish: false, portalName: 'API Portal 1' });
   });
 
-  it('publishes straight away from the split button\u2019s main action', async () => {
+  it('publishes straight away from the split button\u2019s main action when no draft is saved', async () => {
     servePublications([
       aPublicationSummary({ apiPortalId: 'acme-portal', apiPortalName: 'API Portal 1' }),
     ]);
@@ -190,6 +190,55 @@ describe('ApiPortalPublicationsList', () => {
 
     expect(await screen.findByText('publish flow')).toBeInTheDocument();
     expect(flowState()).toEqual({ autoPublish: true, portalName: 'API Portal 1' });
+  });
+
+  describe('one-click Publish with a saved draft', () => {
+    const twoDaysAgo = () => new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+
+    async function openPrompt() {
+      servePublications([
+        aPublicationSummary({ apiPortalId: 'acme-portal', apiPortalName: 'API Portal 1', draftUpdatedAt: twoDaysAgo() }),
+      ]);
+      const view = renderPage();
+      await view.user.click(await screen.findByRole('button', { name: 'Publish' }));
+      return { ...view, dialog: await screen.findByRole('dialog') };
+    }
+
+    it('asks first, naming the portal and when the draft was saved, and publishes nothing yet', async () => {
+      const { dialog } = await openPrompt();
+
+      expect(within(dialog).getByText('Publish the saved draft?')).toBeInTheDocument();
+      expect(within(dialog).getByText('A draft for API Portal 1 was saved 2 days ago. It will be published as saved.')).toBeInTheDocument();
+      expect(screen.queryByText('publish flow')).not.toBeInTheDocument();
+    });
+
+    it('publishes the draft from the publish page on Publish draft', async () => {
+      const { dialog, user } = await openPrompt();
+
+      await user.click(within(dialog).getByRole('button', { name: 'Publish draft' }));
+
+      expect(await screen.findByText('publish flow')).toBeInTheDocument();
+      expect(flowState()).toEqual({ autoPublish: true, portalName: 'API Portal 1' });
+    });
+
+    it('opens the draft for review without publishing on Review draft', async () => {
+      const { dialog, user } = await openPrompt();
+
+      await user.click(within(dialog).getByRole('button', { name: 'Review draft' }));
+
+      expect(await screen.findByText('publish flow')).toBeInTheDocument();
+      expect(flowState()).toEqual({ autoPublish: false, portalName: 'API Portal 1' });
+    });
+
+    it('changes nothing when closed', async () => {
+      const { dialog, user } = await openPrompt();
+
+      await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(screen.queryByText('publish flow')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Publish' })).toBeEnabled();
+    });
   });
 
   it.each(['PUBLISHED', 'DEPRECATED'] as const)(
