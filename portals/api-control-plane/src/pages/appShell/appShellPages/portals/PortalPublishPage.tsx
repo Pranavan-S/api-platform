@@ -60,6 +60,7 @@ import { restPublishTarget, type PublishTarget } from './publishTarget';
 import { usePublishPageData } from './usePublishPageData';
 import { buildLandingPageStarter } from './utils/landingPageStarter';
 import {
+  contentOf,
   reformatDefinition,
   sameDefinition,
   type DefinitionFormat,
@@ -407,12 +408,12 @@ export function PortalPublishPageContent({ target }: { target: PublishTarget }) 
   const [landingPageFailed, setLandingPageFailed] = useState(false);
   // What the server holds for the fields shown, so edits made since can be told apart.
   const [saved, setSaved] = useState<{
-    definitionText: string;
+    definition: StoredDefinition;
     landingPage?: string;
     thumbnail?: Blob;
     values: DraftFormValues;
   }>({
-    definitionText: '',
+    definition: { format: defaultFormat, text: '' },
     values: emptyDraftFormValues,
   });
   const [pendingAction, setPendingAction] = useState<PendingAction>('idle');
@@ -439,7 +440,7 @@ export function PortalPublishPageContent({ target }: { target: PublishTarget }) 
     setStoredLandingPage(data.seed.landingPage?.inDraft ? data.seed.landingPage.text : undefined);
     setLandingPageFailed(data.seed.landingPageFailed);
     setSaved({
-      definitionText: data.seed.definition?.text ?? '',
+      definition: { format: data.seed.definition?.format ?? defaultFormat, text: data.seed.definition?.text ?? '' },
       landingPage: data.seed.landingPage?.text,
       thumbnail: data.seed.thumbnail?.blob,
       values: data.seed.values,
@@ -545,6 +546,14 @@ export function PortalPublishPageContent({ target }: { target: PublishTarget }) 
     [data.apiDefinition, hasSaved, specBaseline],
   );
 
+  // By content: a JSON/YAML switch re-prints the text without changing what would be saved.
+  // Each side is parsed only when it changes, not on every render.
+  const savedDefinitionContent = useMemo(() => contentOf(saved.definition), [saved.definition]);
+  const definitionContentNow = useMemo(
+    () => contentOf({ format: definitionFormat, text: definitionText }),
+    [definitionFormat, definitionText],
+  );
+
   if (data.isLoading) {
     return <LoadingState label={intl.formatMessage(messages.loading)} />;
   }
@@ -566,7 +575,7 @@ export function PortalPublishPageContent({ target }: { target: PublishTarget }) 
   const view: PublicationVersionTone = pick ?? (isPublished ? 'published' : 'draft');
   const showingPublished = view === 'published';
   const hasUnsavedChanges =
-    definitionText !== saved.definitionText ||
+    definitionContentNow !== savedDefinitionContent ||
     thumbnail !== saved.thumbnail ||
     landingPage !== saved.landingPage ||
     !sameDraftFormValues(values, saved.values);
@@ -656,7 +665,7 @@ export function PortalPublishPageContent({ target }: { target: PublishTarget }) 
         body: definitionDocument,
       }),
     );
-    setSaved((current) => ({ ...current, definitionText }));
+    setSaved((current) => ({ ...current, definition: { format: definitionFormat, text: definitionText } }));
     setSpecBaseline({ format: definitionFormat, text: definitionText });
     return true;
   };

@@ -71,7 +71,7 @@ export const reformatDefinition = (definition: StoredDefinition, format: Definit
 };
 
 /** A definition's content in one form: an OpenAPI document as compact JSON, a GraphQL schema without surrounding blank space. */
-const contentOf = ({ format, text }: StoredDefinition): string => {
+export const contentOf = ({ format, text }: StoredDefinition): string => {
   if (format === 'graphql') return text.trim();
   const parsed = parseSpecText(text, format);
   return parsed.status === 'parsed' ? JSON.stringify(parsed.spec) : text;

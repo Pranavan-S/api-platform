@@ -1101,6 +1101,8 @@ describe('PortalPublishPage', () => {
 
     const { user } = renderPage();
     await screen.findByDisplayValue('Loan Management Service');
+    // A switch alone is not a change to save, so something else is edited too.
+    await makeEdit(user);
     await user.click(screen.getByRole('tab', { name: 'Specification' }));
     await user.click(await screen.findByRole('button', { name: 'JSON' }));
     await user.click(screen.getByRole('button', { name: 'Save Draft' }));
@@ -2365,6 +2367,24 @@ describe('PortalPublishPage — unsaved changes', () => {
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled());
     expect(screen.queryByText(/Unsaved changes/)).not.toBeInTheDocument();
+  });
+
+  it('does not count a JSON/YAML switch as a change, only an edit to the content', async () => {
+    servePublicationState({ draft: aPublicationDraftDetails({ updatedAt: new Date().toISOString() }) });
+    server.use(resource(DRAFT_DEFINITION_PATH, { openapi: '3.0.3', info: { title: 'Loans', version: '1.0.0' }, paths: {} }));
+
+    const { user } = renderPage();
+    await user.click(await screen.findByRole('tab', { name: 'Specification' }));
+    await screen.findByRole('textbox', { name: 'API definition (JSON)' });
+
+    await user.click(screen.getByRole('button', { name: 'YAML' }));
+    const yamlEditor = await screen.findByRole('textbox', { name: 'API definition (YAML)' });
+    expect(screen.queryByText('Unsaved changes', { exact: false })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeDisabled();
+
+    await user.type(yamlEditor, 'x-note: edited');
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save Draft' })).toBeEnabled();
   });
 
   it('reports unsaved changes alone when no draft has been saved yet, and again once an edit is undone', async () => {
