@@ -103,9 +103,19 @@ function renderPage() {
   );
 }
 
-/** Nothing saved for this portal yet: the page opens on the API's own details and SDL. */
+const DOCS_PATH = `/apis/graphql-api/${API}/docs`;
+
+/** With nothing saved, Publish waits until every document has been listed and selected. */
+const readyToPublish = () =>
+  waitFor(() => expect(screen.getByRole('button', { name: 'Publish' })).toBeEnabled());
+
+/**
+ * Nothing saved for this portal yet: the page opens on the API's own details and SDL, and lists the API's
+ * documents (none unless a test serves some) to select them all.
+ */
 function serveFreshApi() {
   server.use(
+    collection(DOCS_PATH, []),
     mswHttp.get(apiUrl(`/apis/graphql-api/${API}/thumbnail`), () => new HttpResponse(null, { status: 204 })),
     resource('/graphql-apis/:graphqlApiId', api),
     resource('/graphql-apis/:graphqlApiId/sdl', { sdl: SDL }),
@@ -157,6 +167,7 @@ describe('GraphqlPortalPublishPage', () => {
     const { user } = renderPage();
 
     await screen.findByDisplayValue('Countries GraphQL API');
+    await readyToPublish();
     await user.click(screen.getByRole('button', { name: 'Publish' }));
 
     await waitFor(() => expect(definitionRequests.count()).toBe(1));
@@ -180,6 +191,7 @@ describe('GraphqlPortalPublishPage', () => {
     const editor = await screen.findByRole('textbox', { name: 'API definition (GraphQL)' });
     await user.clear(editor);
     await user.type(editor, 'type Query {{ broken');
+    await readyToPublish();
     await user.click(screen.getByRole('button', { name: 'Publish' }));
 
     expect(await screen.findByText(/This is not valid GraphQL/)).toBeInTheDocument();
@@ -209,14 +221,13 @@ describe('GraphqlPortalPublishPage', () => {
     });
   });
 
-  it('saves the selected documents with the GraphQL draft', async () => {
+  it('selects every document of a fresh GraphQL API and saves them with the draft', async () => {
     serveFreshApi();
-    const docsPath = `/apis/graphql-api/${API}/docs`;
     const draftRequests = recorder();
     server.use(
-      collection(docsPath, [{ contentType: 'text/markdown', displayName: 'Schema guide', id: 'schema-guide', type: 'HowTo' }]),
+      collection(DOCS_PATH, [{ contentType: 'text/markdown', displayName: 'Schema guide', id: 'schema-guide', type: 'HowTo' }]),
       mswHttp.get(
-        apiUrl(`${docsPath}/:docId/content`),
+        apiUrl(`${DOCS_PATH}/:docId/content`),
         () => new HttpResponse('Body', { headers: { 'Content-Type': 'text/markdown' } }),
       ),
       accepts('put', `${BASE}/draft`, aPublicationDraftDetails(), { record: draftRequests }),
@@ -227,7 +238,7 @@ describe('GraphqlPortalPublishPage', () => {
     await screen.findByDisplayValue('Countries GraphQL API');
     await user.click(screen.getByRole('tab', { name: 'Documentation' }));
     const row = (await screen.findByText('Schema guide')).closest('[role="row"]') as HTMLElement;
-    await user.click(within(row).getByRole('checkbox'));
+    await waitFor(() => expect(within(row).getByRole('checkbox')).toBeChecked());
     await user.click(screen.getByRole('button', { name: 'Save Draft' }));
 
     await waitFor(() => expect(draftRequests.count()).toBe(1));

@@ -79,6 +79,9 @@ function renderPage() {
   );
 }
 
+/** The navigation state the card handed the publish flow. */
+const flowState = () => JSON.parse(screen.getByTestId('flow-state').textContent ?? '{}') as unknown;
+
 const servePublications = (items: PublicationSummaryFixture[]) => {
   server.use(collection('/api-publications', items, { record: requests }));
 };
@@ -174,14 +177,10 @@ describe('ApiPortalPublicationsList', () => {
     await user.click(screen.getByRole('button', { name: 'Configure & Publish' }));
 
     expect(await screen.findByText('publish flow')).toBeInTheDocument();
-    expect(JSON.parse(screen.getByTestId('flow-state').textContent ?? '{}')).toMatchObject({
-      autoPublish: false,
-      documents: 'default',
-      portalName: 'API Portal 1',
-    });
+    expect(flowState()).toEqual({ autoPublish: false, portalName: 'API Portal 1' });
   });
 
-  it('publishes with every document by default, from the split button\u2019s main action', async () => {
+  it('publishes straight away from the split button\u2019s main action', async () => {
     servePublications([
       aPublicationSummary({ apiPortalId: 'acme-portal', apiPortalName: 'API Portal 1' }),
     ]);
@@ -190,12 +189,26 @@ describe('ApiPortalPublicationsList', () => {
     await user.click(await screen.findByRole('button', { name: 'Publish' }));
 
     expect(await screen.findByText('publish flow')).toBeInTheDocument();
-    expect(JSON.parse(screen.getByTestId('flow-state').textContent ?? '{}')).toMatchObject({
-      autoPublish: true,
-      documents: 'all',
-      portalName: 'API Portal 1',
-    });
+    expect(flowState()).toEqual({ autoPublish: true, portalName: 'API Portal 1' });
   });
+
+  it.each(['PUBLISHED', 'DEPRECATED'] as const)(
+    'offers only Configure & Publish once the API is %s on the portal',
+    async (status) => {
+      servePublications([aPublicationSummary({ apiPortalId: 'acme-portal', apiPortalName: 'API Portal 1', status })]);
+      const { user } = renderPage();
+
+      const configure = await screen.findByRole('button', { name: 'Configure & Publish' });
+      expect(screen.queryByRole('button', { name: 'Publish' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'More publish options' })).not.toBeInTheDocument();
+      expect(configure).toHaveAccessibleDescription('API Portal 1');
+
+      await user.click(configure);
+
+      expect(await screen.findByText('publish flow')).toBeInTheDocument();
+      expect(flowState()).toEqual({ autoPublish: false, portalName: 'API Portal 1' });
+    },
+  );
 
   it('keeps Publish as the button label after the menu is opened and closed', async () => {
     servePublications([aPublicationSummary({ apiPortalId: 'acme-portal' })]);

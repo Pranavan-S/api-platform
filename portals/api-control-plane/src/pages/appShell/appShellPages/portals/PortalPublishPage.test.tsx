@@ -140,6 +140,7 @@ const TWO_DOCS = [
   { contentType: 'text/markdown', displayName: 'Getting started', id: 'guide', type: 'HowTo' },
   { contentType: 'text/markdown', displayName: 'Common questions', id: 'faq', type: 'FAQ' },
 ];
+const THREE_DOCS = [...TWO_DOCS, { contentType: 'text/markdown', displayName: 'Release notes', id: 'notes', type: 'Other' }];
 
 const DRAFT_PATH = `/api-portals/${PORTAL}/apis/rest-api/${API}/draft`;
 const DRAFT_DEFINITION_PATH = `${DRAFT_PATH}/definition`;
@@ -173,7 +174,10 @@ function definitionTierRecorders() {
   };
 }
 
-/** The reads the page makes before it can render the form; `plans` is the org's catalog. */
+/**
+ * The reads the page makes before it can render the form; `plans` is the org's catalog. The API has no
+ * documents unless a test serves some, since a page with nothing saved lists them to select them all.
+ */
 function servePublicationState({
   draft,
   publication,
@@ -192,6 +196,7 @@ function servePublicationState({
   server.use(
     apiThumbnail,
     collection('/subscription-plans', plans),
+    collection(DOCS_PATH, []),
     resource('/rest-apis/:restApiId', api),
     collection(GATEWAYS_PATH, gateways),
     draft ? resource(DRAFT_PATH, draft) : failure('get', DRAFT_PATH, 404, 'DRAFT_NOT_FOUND'),
@@ -281,6 +286,10 @@ const makeEdit = (user: ReturnType<typeof renderPage>['user']) =>
 /** A live API opens on its published version; the actions and the editable form are on the draft. */
 const showDraft = async (user: ReturnType<typeof renderPage>['user']) =>
   user.click(await screen.findByRole('button', { name: 'Draft' }));
+
+/** With nothing saved, Publish waits until every document has been listed and selected. */
+const readyToPublish = () =>
+  waitFor(() => expect(screen.getByRole('button', { name: 'Publish' })).toBeEnabled());
 
 /** Types the API name the dialog asks for, then confirms. */
 async function confirmInDialog(user: ReturnType<typeof renderPage>['user']) {
@@ -1590,6 +1599,7 @@ describe('PortalPublishPage', () => {
     const { user } = renderPage();
 
     await screen.findByDisplayValue('Loan Management Service');
+    await readyToPublish();
     await user.click(screen.getByRole('button', { name: 'Publish' }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Publish' })).toBeEnabled());
@@ -1616,6 +1626,7 @@ describe('PortalPublishPage', () => {
 
     await screen.findByDisplayValue('Loan Management Service');
     expect(screen.getByRole('tab', { name: 'API Details' })).toHaveAttribute('aria-selected', 'true');
+    await readyToPublish();
     await user.click(screen.getByRole('button', { name: 'Publish' }));
 
     await waitFor(() => expect(definitionRequests.count()).toBe(1));
@@ -1640,6 +1651,7 @@ describe('PortalPublishPage', () => {
 
     await screen.findByDisplayValue('Loan Management Service');
     await user.click(screen.getByRole('tab', { name: 'Landing Page' }));
+    await readyToPublish();
     await user.click(screen.getByRole('button', { name: 'Publish' }));
 
     await waitFor(() =>
@@ -1661,6 +1673,7 @@ describe('PortalPublishPage', () => {
 
     await screen.findByDisplayValue('Loan Management Service');
     await user.click(screen.getByRole('tab', { name: 'Landing Page' }));
+    await readyToPublish();
     await user.click(screen.getByRole('button', { name: 'Publish' }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Publish' })).toBeEnabled());
@@ -1682,6 +1695,7 @@ describe('PortalPublishPage', () => {
 
       await screen.findByDisplayValue('Loan Management Service');
       await user.click(screen.getByRole('tab', { name: tabName }));
+      await readyToPublish();
       await user.click(screen.getByRole('button', { name: 'Publish' }));
 
       await waitFor(() => expect(screen.getByRole('button', { name: 'Publish' })).toBeEnabled());
@@ -1700,6 +1714,7 @@ describe('PortalPublishPage', () => {
     const { user } = renderPage();
 
     await screen.findByDisplayValue('Loan Management Service');
+    await readyToPublish();
     await user.click(screen.getByRole('button', { name: 'Publish' }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Publish' })).toBeEnabled());
@@ -2025,6 +2040,7 @@ describe('PortalPublishPage — while a publish runs', () => {
     await screen.findByDisplayValue('Loan Management Service');
     expect(screen.queryByText(/^Edited/)).not.toBeInTheDocument();
 
+    await readyToPublish();
     await user.click(screen.getByRole('button', { name: 'Publish' }));
     // Both saves have gone through; the publish call is still in flight.
     await waitFor(() => expect(screen.getByRole('button', { name: 'Publish' })).toBeDisabled());
@@ -2042,6 +2058,7 @@ describe('PortalPublishPage — while a publish runs', () => {
 
     const { user } = renderPage();
     await screen.findByDisplayValue('Loan Management Service');
+    await readyToPublish();
     await user.click(screen.getByRole('button', { name: 'Publish' }));
 
     expect(await screen.findByText('portals listing')).toBeInTheDocument();
@@ -2379,7 +2396,7 @@ describe('PortalPublishPage — landing page', () => {
         accepts('post', PUBLISH_PATH, aPublication(), { record: publishRequests }),
       );
 
-      renderFromCard({ autoPublish: true, documents: 'all', portalName: 'Acme' });
+      renderFromCard({ autoPublish: true, portalName: 'Acme' });
 
       await waitFor(() => expect(publishRequests.count()).toBe(1));
       const body = JSON.parse(draftRequests.last()?.body ?? '{}');
@@ -2388,7 +2405,7 @@ describe('PortalPublishPage — landing page', () => {
       expect(await screen.findByText('portals listing')).toBeInTheDocument();
     });
 
-    it('only selects the documents for "Configure & Publish", leaving the publish to the user', async () => {
+    it('selects every document for "Configure & Publish" when nothing is saved, leaving the publish to the user', async () => {
       servePublicationState();
       const publishRequests = recorder();
       server.use(
@@ -2396,7 +2413,7 @@ describe('PortalPublishPage — landing page', () => {
         accepts('post', PUBLISH_PATH, aPublication(), { record: publishRequests }),
       );
 
-      const { user } = renderFromCard({ documents: 'default' });
+      const { user } = renderFromCard({});
 
       await screen.findByDisplayValue('Loan Management Service');
       await user.click(screen.getByRole('tab', { name: 'Documentation' }));
@@ -2412,7 +2429,7 @@ describe('PortalPublishPage — landing page', () => {
       });
       server.use(collection(DOCS_PATH, TWO_DOCS));
 
-      const { user } = renderFromCard({ documents: 'default' });
+      const { user } = renderFromCard({});
 
       await screen.findByDisplayValue('Loan Management Service');
       await user.click(screen.getByRole('tab', { name: 'Documentation' }));
@@ -2421,11 +2438,99 @@ describe('PortalPublishPage — landing page', () => {
       expect(documentBox('Common questions')).not.toBeChecked();
     });
 
-    it('clears a plan the saved draft selected, since publishing from the card carries none', async () => {
+    it('republishes the publication\u2019s documents and plans as they are, without the ones it left out', async () => {
       const gold = aSubscriptionPlan({ displayName: 'Gold', id: 'gold', status: 'ACTIVE' });
       servePublicationState({
-        draft: aPublicationDraftDetails({ subscriptionPlans: publicationSelections('gold') }),
         plans: [gold],
+        publication: aPublication({
+          documents: publicationSelections(
+            { displayName: 'Getting started', id: 'guide' },
+            { displayName: 'Common questions', id: 'faq' },
+          ),
+          subscriptionPlans: publicationSelections('gold'),
+        }),
+      });
+      const draftRequests = recorder();
+      const publishRequests = recorder();
+      server.use(
+        collection(DOCS_PATH, THREE_DOCS),
+        accepts('put', DRAFT_PATH, aPublicationDraftDetails(), { record: draftRequests }),
+        accepts('put', DRAFT_DEFINITION_PATH, undefined),
+        accepts('post', PUBLISH_PATH, aPublication(), { record: publishRequests }),
+      );
+
+      const { user } = renderFromCard({ autoPublish: false, portalName: 'Acme' });
+
+      await showDraft(user);
+      await user.click(screen.getByRole('tab', { name: 'Documentation' }));
+      await screen.findByText('Release notes');
+      expect(documentBox('Getting started')).toBeChecked();
+      expect(documentBox('Common questions')).toBeChecked();
+      expect(documentBox('Release notes')).not.toBeChecked();
+      await user.click(screen.getByRole('tab', { name: 'Subscription Plans' }));
+      expect(await screen.findByRole('checkbox', { name: /Gold/ })).toBeChecked();
+
+      await user.click(screen.getByRole('button', { name: 'Republish' }));
+
+      await waitFor(() => expect(publishRequests.count()).toBe(1));
+      const body = JSON.parse(draftRequests.last()?.body ?? '{}');
+      expect([...body.docIds].sort()).toEqual(['faq', 'guide']);
+      expect(body.subscriptionPlanIds).toEqual(['gold']);
+    });
+
+    it('keeps a publication with no documents at none', async () => {
+      servePublicationState({ publication: aPublication({ documents: [] }) });
+      server.use(collection(DOCS_PATH, TWO_DOCS));
+
+      const { user } = renderFromCard({ autoPublish: false });
+
+      await showDraft(user);
+      await user.click(screen.getByRole('tab', { name: 'Documentation' }));
+      await screen.findByText('Common questions');
+      expect(documentBox('Getting started')).not.toBeChecked();
+      expect(documentBox('Common questions')).not.toBeChecked();
+    });
+
+    it('waits for the plan list before publishing a saved plan automatically', async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      servePublicationState({ draft: aPublicationDraftDetails({ subscriptionPlans: publicationSelections('gold') }) });
+      const draftRequests = recorder();
+      const publishRequests = recorder();
+      server.use(
+        mswHttp.get(apiUrl('/subscription-plans'), async () => {
+          await gate;
+          const list = [aSubscriptionPlan({ displayName: 'Gold', id: 'gold', status: 'ACTIVE' })];
+          return HttpResponse.json({ count: 1, list, pagination: { limit: 100, offset: 0, total: 1 } } as never);
+        }),
+        accepts('put', DRAFT_PATH, aPublicationDraftDetails(), { record: draftRequests }),
+        accepts('put', DRAFT_DEFINITION_PATH, undefined),
+        accepts('post', PUBLISH_PATH, aPublication(), { record: publishRequests }),
+      );
+
+      renderFromCard({ autoPublish: true });
+
+      await screen.findByDisplayValue('Loan Management Service');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(publishRequests.count()).toBe(0);
+      release();
+
+      await waitFor(() => expect(publishRequests.count()).toBe(1));
+      expect(JSON.parse(draftRequests.last()?.body ?? '{}').subscriptionPlanIds).toEqual(['gold']);
+    });
+
+    it('drops a deactivated plan and a deleted document before publishing automatically', async () => {
+      servePublicationState({
+        draft: aPublicationDraftDetails({
+          documents: publicationSelections('guide', 'deleted'),
+          subscriptionPlans: publicationSelections('gold', 'silver'),
+        }),
+        plans: [
+          aSubscriptionPlan({ displayName: 'Gold', id: 'gold', status: 'INACTIVE' }),
+          aSubscriptionPlan({ displayName: 'Silver', id: 'silver', status: 'ACTIVE' }),
+        ],
       });
       const draftRequests = recorder();
       const publishRequests = recorder();
@@ -2436,10 +2541,32 @@ describe('PortalPublishPage — landing page', () => {
         accepts('post', PUBLISH_PATH, aPublication(), { record: publishRequests }),
       );
 
-      renderFromCard({ autoPublish: true, documents: 'all' });
+      renderFromCard({ autoPublish: true });
 
       await waitFor(() => expect(publishRequests.count()).toBe(1));
-      expect(JSON.parse(draftRequests.last()?.body ?? '{}').subscriptionPlanIds ?? []).toEqual([]);
+      expect(draftRequests.count()).toBe(1);
+      expect(JSON.parse(draftRequests.last()?.body ?? '{}')).toMatchObject({
+        docIds: ['guide'],
+        subscriptionPlanIds: ['silver'],
+      });
+    });
+
+    it('selects every document on a first publish opened by a direct link, and publishes nothing', async () => {
+      servePublicationState();
+      const publishRequests = recorder();
+      server.use(
+        collection(DOCS_PATH, TWO_DOCS),
+        accepts('post', PUBLISH_PATH, aPublication(), { record: publishRequests }),
+      );
+
+      const { user } = renderPage();
+
+      await screen.findByDisplayValue('Loan Management Service');
+      await user.click(screen.getByRole('tab', { name: 'Documentation' }));
+      await screen.findByText('Common questions');
+      await waitFor(() => expect(documentBox('Common questions')).toBeChecked());
+      expect(documentBox('Getting started')).toBeChecked();
+      expect(publishRequests.count()).toBe(0);
     });
 
     it('holds Publish back until the documents are selected', async () => {
@@ -2459,7 +2586,7 @@ describe('PortalPublishPage — landing page', () => {
         }),
       );
 
-      renderFromCard({ documents: 'default' });
+      renderFromCard({});
 
       await screen.findByDisplayValue('Loan Management Service');
       expect(screen.getByRole('button', { name: 'Publish' })).toBeDisabled();
@@ -2483,7 +2610,7 @@ describe('PortalPublishPage — landing page', () => {
         accepts('post', PUBLISH_PATH, aPublication(), { record: publishRequests }),
       );
 
-      const { user } = renderFromCard({ autoPublish: true, documents: 'all' });
+      const { user } = renderFromCard({ autoPublish: true });
 
       expect(await screen.findByText(/documents could not be loaded/)).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Publish' })).toBeDisabled();
@@ -2511,7 +2638,7 @@ describe('PortalPublishPage — landing page', () => {
         accepts('post', PUBLISH_PATH, aPublication(), { record: publishRequests }),
       );
 
-      renderFromCard({ autoPublish: true, documents: 'all' });
+      renderFromCard({ autoPublish: true });
 
       expect(await screen.findByText(/too many documents to attach them all/, undefined, { timeout: 5000 })).toBeInTheDocument();
       expect(publishRequests.count()).toBe(0);
@@ -2528,7 +2655,7 @@ describe('PortalPublishPage — landing page', () => {
         accepts('post', PUBLISH_PATH, aPublication(), { record: publishRequests }),
       );
 
-      renderFromCard({ autoPublish: true, documents: 'all', portalName: 'Acme' });
+      renderFromCard({ autoPublish: true, portalName: 'Acme' });
       await waitFor(() => expect(publishRequests.count()).toBe(1));
       await screen.findByText('portals listing');
 
@@ -2549,7 +2676,7 @@ describe('PortalPublishPage — landing page', () => {
         }),
       );
 
-      renderFromCard({ autoPublish: true, documents: 'all' });
+      renderFromCard({ autoPublish: true });
 
       await waitFor(() =>
         expect(screen.getByRole('tab', { name: 'Specification' })).toHaveAttribute('aria-selected', 'true'),

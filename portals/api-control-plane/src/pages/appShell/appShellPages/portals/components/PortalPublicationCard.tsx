@@ -47,7 +47,7 @@ const messages = defineMessages({
     id: 'apiControlPlane.pages.appShell.appShellPages.portals.components.PortalPublicationCard.publish',
     defaultMessage: 'Publish',
     description:
-      'Split button action publishing this API to this portal straight away, with all its documents attached and no subscription plan selected.',
+      'Split button action, offered only before the API is first published to this portal, that publishes it there straight away.',
   },
   moreActions: {
     id: 'apiControlPlane.pages.appShell.appShellPages.portals.components.PortalPublicationCard.moreActions',
@@ -169,18 +169,13 @@ export function PortalPublicationCard({
   const [menuOpen, setMenuOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement>(null);
 
-  // Both open the publish page with every document selected (a saved selection is kept for
-  // "Configure & Publish"). "Publish" also publishes once the page is ready, so the same checks and
-  // saves apply; no subscription plan is selected either way.
-  const runPublish = () => {
+  // Once the API is on the portal, every republish is reviewed on the publish page first.
+  const firstPublish = publication.status === 'NOT_PUBLISHED';
+
+  // "Publish" also publishes once the page is ready, so the same checks and saves apply.
+  const openPublishPage = (autoPublish: boolean) => {
     if (!publishHref) return;
-    navigate(publishHref, {
-      state: {
-        portalName: publication.apiPortalName,
-        documents: mode === 'publish' ? 'all' : 'default',
-        autoPublish: mode === 'publish',
-      },
-    });
+    navigate(publishHref, { state: { portalName: publication.apiPortalName, autoPublish } });
   };
 
   return (
@@ -232,45 +227,61 @@ export function PortalPublicationCard({
         <Stack alignItems="center" direction="row" spacing={2}>
           <Tooltip title={publishDeniedTooltip ?? ''}>
             <Box sx={{ flex: 1, minWidth: 0 }}>
-              <ButtonGroup
-                disabled={!publishHref || publishDeniedTooltip !== undefined}
-                ref={anchorRef}
-                size="small"
-                sx={{ display: 'flex', width: '100%' }}
-                variant="contained"
-              >
+              {firstPublish ? (
+                <>
+                  <ButtonGroup
+                    disabled={!publishHref || publishDeniedTooltip !== undefined}
+                    ref={anchorRef}
+                    size="small"
+                    sx={{ display: 'flex', width: '100%' }}
+                    variant="contained"
+                  >
+                    <Button
+                      aria-describedby={nameId}
+                      onClick={() => openPublishPage(mode === 'publish')}
+                      startIcon={mode === 'publish' && <Megaphone size={16} />}
+                      sx={{ '&&': { flex: '1 1 auto', minWidth: 0 }, whiteSpace: 'nowrap' }}
+                    >
+                      <FormattedMessage {...(mode === 'publish' ? messages.publish : messages.configureAndPublish)} />
+                    </Button>
+                    <Button
+                      aria-expanded={menuOpen}
+                      aria-haspopup="menu"
+                      aria-label={intl.formatMessage(messages.moreActions)}
+                      onClick={() => setMenuOpen((open) => !open)}
+                      sx={{ '&&': { flex: '0 0 40px', minWidth: 40, px: 0 } }}
+                    >
+                      <ChevronDown size={16} />
+                    </Button>
+                  </ButtonGroup>
+                  <Menu anchorEl={anchorRef.current} onClose={() => setMenuOpen(false)} open={menuOpen}>
+                    {(['publish', 'review'] as const).map((option) => (
+                      <MenuItem
+                        key={option}
+                        onClick={() => {
+                          setMode(option);
+                          setMenuOpen(false);
+                        }}
+                        selected={option === mode}
+                      >
+                        <FormattedMessage {...(option === 'publish' ? messages.publish : messages.configureAndPublish)} />
+                      </MenuItem>
+                    ))}
+                  </Menu>
+                </>
+              ) : (
                 <Button
                   aria-describedby={nameId}
-                  onClick={runPublish}
-                  startIcon={mode === 'publish' && <Megaphone size={16} />}
-                  sx={{ '&&': { flex: '1 1 auto', minWidth: 0 }, whiteSpace: 'nowrap' }}
+                  disabled={!publishHref || publishDeniedTooltip !== undefined}
+                  fullWidth
+                  onClick={() => openPublishPage(false)}
+                  size="small"
+                  sx={{ whiteSpace: 'nowrap' }}
+                  variant="contained"
                 >
-                  <FormattedMessage {...(mode === 'publish' ? messages.publish : messages.configureAndPublish)} />
+                  <FormattedMessage {...messages.configureAndPublish} />
                 </Button>
-                <Button
-                  aria-expanded={menuOpen}
-                  aria-haspopup="menu"
-                  aria-label={intl.formatMessage(messages.moreActions)}
-                  onClick={() => setMenuOpen((open) => !open)}
-                  sx={{ '&&': { flex: '0 0 40px', minWidth: 40, px: 0 } }}
-                >
-                  <ChevronDown size={16} />
-                </Button>
-              </ButtonGroup>
-              <Menu anchorEl={anchorRef.current} onClose={() => setMenuOpen(false)} open={menuOpen}>
-                {(['publish', 'review'] as const).map((option) => (
-                  <MenuItem
-                    key={option}
-                    onClick={() => {
-                      setMode(option);
-                      setMenuOpen(false);
-                    }}
-                    selected={option === mode}
-                  >
-                    <FormattedMessage {...(option === 'publish' ? messages.publish : messages.configureAndPublish)} />
-                  </MenuItem>
-                ))}
-              </Menu>
+              )}
             </Box>
           </Tooltip>
           <Button
