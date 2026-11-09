@@ -123,10 +123,11 @@ export function usePublishPageData(apiPortalId: string, target: PublishTarget, w
     apiType,
     publicationHasLandingPage ? apiHandler : undefined,
   );
-  // Last tier, asked for only once the two above are known to have nothing.
-  const apiOwnThumbnailNeeded =
-    !draftQuery.isPending && !publicationQuery.isPending && !draftHasThumbnail && !publicationHasThumbnail;
-  const apiThumbnailQuery = useApiThumbnail(apiType, apiOwnThumbnailNeeded ? apiHandler : undefined);
+  // Last tier, asked for once the two above are known; beside a saved thumbnail it backs the reload icon,
+  // so it only holds the page back when the two above have nothing.
+  const savedTiersKnown = !draftQuery.isPending && !publicationQuery.isPending;
+  const apiOwnThumbnailNeeded = savedTiersKnown && !draftHasThumbnail && !publicationHasThumbnail;
+  const apiThumbnailQuery = useApiThumbnail(apiType, savedTiersKnown ? apiHandler : undefined);
 
   const publicationDefinitionQuery = useApiPublicationDefinition(
     apiPortalId,
@@ -273,6 +274,7 @@ export function usePublishPageData(apiPortalId: string, target: PublishTarget, w
   return {
     api: apiQuery.data,
     apiDefinition,
+    apiThumbnail: { blob: apiThumbnailQuery.blob, error: apiThumbnailQuery.error, isPending: apiThumbnailQuery.isPending },
     draft,
     error,
     isLoading,

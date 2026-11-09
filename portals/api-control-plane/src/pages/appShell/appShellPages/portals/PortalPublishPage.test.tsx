@@ -220,6 +220,18 @@ function servePublicationState({
 /** An image as the thumbnail endpoints serve it. */
 const pngResponse = () => new HttpResponse(new Uint8Array([0x89, 0x50]), { headers: { 'Content-Type': 'image/png' } });
 
+/** An image of `size` bytes, so tests that name each blob by its size can tell which one is shown. */
+const imageOfSize = (path: string, size: number, reads = recorder()) =>
+  mswHttp.get(apiUrl(path), async ({ request }) => {
+    await reads.capture(request);
+    return new HttpResponse('x'.repeat(size), { headers: { 'Content-Type': 'image/png' } });
+  });
+
+/** Names each blob by its size. */
+const urlBySize = () => {
+  URL.createObjectURL = vi.fn((blob: Blob) => `blob:test/${blob.size}`);
+};
+
 /** Serves a thumbnail at `path`, and counts the reads. */
 const thumbnailAt = (path: string, reads: Recorder) =>
   mswHttp.get(apiUrl(path), async ({ request }) => {
@@ -781,45 +793,36 @@ describe('PortalPublishPage', () => {
     expect(JSON.parse(draftRequests.last()?.body ?? '{}')).toMatchObject({ docIds: ['guide'] });
   });
 
-  it("shows the draft's thumbnail, without reading the publication's or the API's own", async () => {
-    const apiReads = recorder();
-    const publicationReads = recorder();
-    const draftReads = recorder();
+  it("shows the draft's thumbnail over the publication's and the API's own", async () => {
+    urlBySize();
     servePublicationState({
       draft: aPublicationDraftDetails({ hasThumbnail: true }),
       publication: aPublication({ hasThumbnail: true }),
-      apiThumbnail: thumbnailAt(API_THUMBNAIL_PATH, apiReads),
+      apiThumbnail: imageOfSize(API_THUMBNAIL_PATH, 7),
     });
-    server.use(
-      thumbnailAt(DRAFT_THUMBNAIL_PATH, draftReads),
-      thumbnailAt(PUBLICATION_THUMBNAIL_PATH, publicationReads),
-    );
+    server.use(imageOfSize(DRAFT_THUMBNAIL_PATH, 5), imageOfSize(PUBLICATION_THUMBNAIL_PATH, 3));
 
     const { user } = renderPage();
 
     await screen.findByDisplayValue('Loan Management Service');
     await showDraft(user);
-    expect(await screen.findByRole('img', { name: 'Loan Management Service' })).toHaveAttribute('src', 'blob:test/thumbnail');
-    expect(draftReads.count()).toBe(1);
-    expect(apiReads.count()).toBe(0);
+    expect(await screen.findByRole('img', { name: 'Loan Management Service' })).toHaveAttribute('src', 'blob:test/5');
   });
 
   it("falls back to the publication's thumbnail, then to the API's own", async () => {
-    const apiReads = recorder();
-    servePublicationState({
-      publication: aPublication({ hasThumbnail: true }),
-      apiThumbnail: thumbnailAt(API_THUMBNAIL_PATH, apiReads),
-    });
-    server.use(thumbnailAt(PUBLICATION_THUMBNAIL_PATH, recorder()));
+    const publicationReads = recorder();
+    servePublicationState({ publication: aPublication({ hasThumbnail: true }) });
+    server.use(thumbnailAt(PUBLICATION_THUMBNAIL_PATH, publicationReads));
 
     const first = renderPage();
     await screen.findByDisplayValue('Loan Management Service');
     await showDraft(first.user);
     expect(await screen.findByRole('img', { name: 'Loan Management Service' })).toBeInTheDocument();
-    expect(apiReads.count()).toBe(0);
+    expect(publicationReads.count()).toBe(1);
     first.unmount();
 
     resetHttpClient();
+    const apiReads = recorder();
     servePublicationState({ apiThumbnail: thumbnailAt(API_THUMBNAIL_PATH, apiReads) });
     renderPage();
     await screen.findByDisplayValue('Loan Management Service');
@@ -2073,6 +2076,68 @@ describe('PortalPublishPage — the API\u2019s own specification', () => {
 
     expect(screen.getByRole('textbox', { name: 'API definition (YAML)' })).toHaveValue(CHANGED);
     expect(screen.queryByRole('button', { name: LOAD })).not.toBeInTheDocument();
+  });
+});
+
+describe('PortalPublishPage — the API\u2019s own thumbnail', () => {
+  const RELOAD = 'Use the API\u2019s default thumbnail';
+
+  beforeEach(urlBySize);
+
+  /** The publication's thumbnail is three bytes; the API's own, when it has one, seven. */
+  function servePublishedThumbnail(apiThumbnail = imageOfSize(API_THUMBNAIL_PATH, 7)) {
+    servePublicationState({ apiThumbnail, publication: aPublication({ hasThumbnail: true }) });
+    server.use(imageOfSize(PUBLICATION_THUMBNAIL_PATH, 3));
+  }
+
+  async function openDraftDetails() {
+    const view = renderPage();
+    await showDraft(view.user);
+    expect(await screen.findByRole('img', { name: API_NAME })).toHaveAttribute('src', 'blob:test/3');
+    return view;
+  }
+
+  it('replaces the thumbnail with the API\u2019s own as an unsaved change', async () => {
+    servePublishedThumbnail();
+    const { user } = await openDraftDetails();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: RELOAD })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: RELOAD }));
+
+    expect(screen.getByRole('img', { name: API_NAME })).toHaveAttribute('src', 'blob:test/7');
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+  });
+
+  it('changes nothing and says so when the API has no thumbnail', async () => {
+    servePublishedThumbnail(apiWithoutThumbnail());
+    const { user } = await openDraftDetails();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: RELOAD })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: RELOAD }));
+
+    expect(await screen.findByText('This API has no thumbnail.')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: API_NAME })).toHaveAttribute('src', 'blob:test/3');
+    expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+  });
+
+  it('changes nothing and says so when the API\u2019s thumbnail cannot be read', async () => {
+    servePublishedThumbnail(failure('get', API_THUMBNAIL_PATH, 500, 'INTERNAL_ERROR'));
+    const { user } = await openDraftDetails();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: RELOAD })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: RELOAD }));
+
+    expect(await screen.findByText('The API\u2019s thumbnail could not be loaded.')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: API_NAME })).toHaveAttribute('src', 'blob:test/3');
+  });
+
+  it('offers no reload on a first publish, which already shows the API\u2019s own thumbnail', async () => {
+    servePublicationState();
+
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: 'Change thumbnail' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: RELOAD })).not.toBeInTheDocument();
   });
 });
 

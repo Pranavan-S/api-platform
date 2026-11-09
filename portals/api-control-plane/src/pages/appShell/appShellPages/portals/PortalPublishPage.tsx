@@ -226,6 +226,16 @@ const messages = defineMessages({
     id: 'apiControlPlane.pages.appShell.appShellPages.portals.PortalPublishPage.deprecateConfirmTitle',
     defaultMessage: 'Deprecate this API?',
   },
+  apiThumbnailMissing: {
+    id: 'apiControlPlane.pages.appShell.appShellPages.portals.PortalPublishPage.apiThumbnailMissing',
+    defaultMessage: 'This API has no thumbnail.',
+    description: 'Shown when the publisher asks for the API\u2019s own thumbnail and the API has none, so nothing changed.',
+  },
+  apiThumbnailFailed: {
+    id: 'apiControlPlane.pages.appShell.appShellPages.portals.PortalPublishPage.apiThumbnailFailed',
+    defaultMessage: 'The API\u2019s thumbnail could not be loaded.',
+    description: 'Shown when the publisher asks for the API\u2019s own thumbnail and reading it failed, so nothing changed.',
+  },
   deprecateConfirmMessage: {
     id: 'apiControlPlane.pages.appShell.appShellPages.portals.PortalPublishPage.deprecateConfirmMessage',
     defaultMessage:
@@ -704,8 +714,16 @@ export function PortalPublishPageContent({ target }: { target: PublishTarget }) 
     setSpecBaseline(data.apiDefinition);
   };
 
-  /** Takes an image the user picked as the thumbnail, unless the server would refuse it. */
-  const pickThumbnail = (file: File) => {
+  /** Replaces the thumbnail with the API's own, as an unsaved change; says why when there is none to take. */
+  const reloadApiThumbnail = () => {
+    const { blob, error } = data.apiThumbnail;
+    if (error) notify(intl.formatMessage(messages.apiThumbnailFailed), 'error');
+    else if (!blob) notify(intl.formatMessage(messages.apiThumbnailMissing), 'info');
+    else pickThumbnail(blob);
+  };
+
+  /** Takes an image as the thumbnail, unless the server would refuse it. */
+  const pickThumbnail = (file: Blob) => {
     const problem = validateThumbnailFile(file);
     if (problem) {
       notify(intl.formatMessage(problem), 'error');
@@ -872,7 +890,9 @@ export function PortalPublishPageContent({ target }: { target: PublishTarget }) 
             onBlurField={markTouched}
             onChange={handleChange}
             onThumbnailPick={pickThumbnail}
+            onThumbnailReload={hasSaved ? reloadApiThumbnail : undefined}
             productionUrlOptions={data.productionUrlOptions}
+            thumbnailReloadDisabled={data.apiThumbnail.isPending}
             thumbnailUrl={thumbnailUrl}
             values={values}
           />
